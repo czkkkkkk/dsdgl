@@ -10,6 +10,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.multiprocessing as mp
 import numpy as np
 import time
+import dgl.ds as ds
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -47,6 +48,8 @@ def run(rank, args):
     print('Start rank', rank, 'with args:', args)
 
     setup(rank, args.n_ranks)
+    ds.init(rank, args.n_ranks)
+    exit(0)
 
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
