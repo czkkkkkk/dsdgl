@@ -152,6 +152,7 @@ file(GLOB DGL_SRC
   src/geometry/cpu/*.cc
   src/dataloading/*.cc
   src/partition/*.cc
+  src/ds/*.cc
 )
 
 file(GLOB_RECURSE DGL_SRC_1
