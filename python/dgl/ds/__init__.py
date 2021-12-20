@@ -9,7 +9,7 @@ DS_CONTEXT = None
 
 def init(rank, world_size):
     global DS_CONTEXT
-    DS_CONTEXT = DSContext.create()
+    DS_CONTEXT = DSContext.create(_CAPI_DGLCreateDSContext)
 
     id = _CAPI_DGLNCCLGetUniqueId(rank)
     id = th.ByteTensor(id)

@@ -4,7 +4,9 @@ from .._ffi.function import _init_api
 @register_object
 class DSContext(ObjectBase):
   @staticmethod
-  def create():
-    return _CAPI_DGLCreateDSContext()
+  def create(func):
+    # FIXME: currently cannot load CAPI in this file
+    return func()
+    # return _CAPI_DGLCreateDSContext()
 
 _init_api("dgl.ds")
