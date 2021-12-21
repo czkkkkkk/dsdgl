@@ -28,11 +28,6 @@ void SampleNeighbors(int fanout, uint64 num_frontier, uint64 *frontier,
                      uint64 *in_ptr, uint64 *in_index,
                      uint64 **out_index);
 
-void reshuffle(int fanout,
-               int device_cnt, int *device_offset, int *cols,
-               int *device_col_ptr, int *clustered_cols,
-               int rank, ncclComm_t &comm, cudaStream_t &s);
-
 void Reshuffle(int fanout, int num_devices, uint64 *device_offset, uint64 *cols,
                uint64 *device_col_ptr, uint64 num_seed, uint64 **out_ptr, uint64 **out_cols,
                int rank, ncclComm_t &comm);

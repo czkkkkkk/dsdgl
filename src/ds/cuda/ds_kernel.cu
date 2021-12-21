@@ -2,6 +2,7 @@
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
 #include <thrust/sort.h>
+#include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include <memory>
 #include <iostream>
@@ -121,7 +122,6 @@ T* Convert(thrust::device_ptr<T> ptr) {
 void Scatter(thrust::device_ptr<uint64> send_buffer, uint64 *send_offset,
              thrust::device_ptr<uint64> recv_buffer, uint64 *recv_offset,
              int group_size, int rank, ncclComm_t &comm, cudaStream_t &s) {
-  assert(send_cnt[rank] == recv_cnt[rank]);
   CUDACHECK(cudaMemcpy(Convert(recv_buffer + recv_offset[rank]), 
                        Convert(send_buffer + send_offset[rank]),
                        (send_offset[rank + 1] - send_offset[rank]) * sizeof(uint64), 
@@ -189,6 +189,7 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
   constexpr int NUM_RNG = ((WARP_SIZE*BLOCK_ROWS)+255)/256;
   __shared__ curandState rng_array[NUM_RNG];
   assert(blockDim.x >= NUM_RNG);
+  int rand_seed = 0;
   if (threadIdx.y == 0 && threadIdx.x < NUM_RNG) {
     curand_init(rand_seed, 0, threadIdx.x, rng_array+threadIdx.x);
   }
@@ -196,12 +197,12 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
   curandState * const rng = rng_array+((threadIdx.x+WARP_SIZE*threadIdx.y)/256);
 
   uint64 out_row = blockIdx.x*blockDim.y+threadIdx.y;
-  while (out_row < num_rows) {
+  while (out_row < num_frontier) {
     const uint64 row = frontier[out_row];
     const uint64 in_row_start = in_ptr[row];
     const uint64 out_row_start = out_ptr[out_row];
     const uint64 deg = in_ptr[row + 1] - in_row_start;
-    for (int idx = threadIdx.x; idx < num_picks; idx += blockDim.x) {
+    for (int idx = threadIdx.x; idx < fanout; idx += blockDim.x) {
       const uint64 edge = curand(rng) % deg;
       const uint64 out_idx = out_row_start + idx;
       out_index[out_idx] = in_index[in_row_start + edge];
@@ -213,11 +214,11 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
 void SampleNeighbors(int fanout, uint64 num_frontier, uint64 *frontier,
                      uint64 *in_ptr, uint64 *in_index,
                      uint64 **out_index) {
-  uint64 *out_ptr, 
-  CUDACHECK(cudaMalloc((void**)&out_ptr, sizeof(uint64) * (num_frontier + 1)));
-  CUDACHECK(cudaMalloc((void**)&(*out_index), sizeof(uint64) * num_frontier * fanout));
+  uint64 *out_ptr;
+  cudaMalloc((void**)&out_ptr, sizeof(uint64) * (num_frontier + 1));
+  cudaMalloc((void**)&(*out_index), sizeof(uint64) * num_frontier * fanout);
   thrust::device_ptr<uint64> d_out_ptr(out_ptr);
-  thrust::fill(d_out_ptr, d_out_ptr + num_frontier, fanout);
+  thrust::fill(d_out_ptr, d_out_ptr + num_frontier, uint64(fanout));
   thrust::exclusive_scan(d_out_ptr, d_out_ptr + num_frontier + 1, d_out_ptr);
   constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
   const dim3 block(WARP_SIZE, BLOCK_ROWS);
@@ -226,7 +227,7 @@ void SampleNeighbors(int fanout, uint64 num_frontier, uint64 *frontier,
   _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block, 0, s>>>(
     fanout, num_frontier, frontier, in_ptr, in_index, out_ptr, *out_index
   );
-  CUDACHECK(cudaStreamSynchronize(s));
+  cudaStreamSynchronize(s);
 }
 
 void Reshuffle(int fanout, int num_devices, uint64 *device_offset, uint64 *cols,
@@ -239,7 +240,8 @@ void Reshuffle(int fanout, int num_devices, uint64 *device_offset, uint64 *cols,
   cudaMalloc((void**)&(*out_cols), sizeof(uint64) * num_seed * fanout);
   thrust::device_ptr<uint64> d_cols(cols), d_out_cols(*out_cols);
   cudaStream_t s = 0;
-  Scatter(cols, device_offset, out_cols, device_col_ptr,
+  Scatter(thrust::device_ptr<uint64>(cols), device_offset, 
+          thrust::device_ptr<uint64>(*out_cols), device_col_ptr,
           num_devices, rank, comm, s);
 }
 
@@ -259,31 +261,3 @@ void showc(uint64 len, uint64 *data) {
   }
   printf("\n");
 }
-
-// int main() {
-//   uint64 num_devices = 8;
-//   uint64 *device_vids = new uint64[9];
-//   for (int i=0; i<num_devices; i++) {
-//     device_vids[i] = i;
-//   }
-//   uint64 *d_device_vids;
-//   cudaMalloc((void**)&d_device_vids, sizeof(uint64)*num_devices);
-//   cudaMemcpy(d_device_vids, device_vids, sizeof(uint64)*num_devices, cudaMemcpyHostToDevice);
-
-//   uint64 num_seeds = 10;
-//   uint64 *seeds = new uint64[num_seeds];
-//   for (int i=0; i<num_seeds; i++) {
-//     seeds[i] = num_seeds - i;
-//   }
-//   uint64 *d_seeds;
-//   cudaMalloc((void**)&d_seeds, sizeof(uint64)*num_seeds);
-//   cudaMemcpy(d_seeds, seeds, sizeof(uint64)*num_seeds, cudaMemcpyHostToDevice);
-//   uint64 *device_col_ptr = new uint64[num_devices + 1]; 
-//   uint64 *device_col_cnt = new uint64[num_devices];
-
-//   int fanout = 2;
-//   show(num_seeds, d_seeds);
-//   Cluster(num_devices, d_device_vids, num_seeds, d_seeds, fanout, device_col_ptr, device_col_cnt);
-//   show(num_seeds, d_seeds);
-//   return 0;
-// }

@@ -11,7 +11,7 @@
 #include <stdio.h>
 
 using namespace dgl::runtime;
-// using namespace dgl::aten;
+using namespace dgl::aten;
 
 namespace dgl {
 namespace ds {
@@ -47,32 +47,31 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   uint64 *d_device_vids = static_cast<uint64*>(min_ids->data);
   uint64 num_seeds = nodes->shape[0];
   uint64 *d_seeds = static_cast<uint64*>(nodes->data); //local id
-  uint64 h_device_col_ptr[num_devices + 1]; 
-  uint64 h_device_col_cnt[num_devices];
+  uint64 *h_device_col_ptr = new uint64[num_devices + 1]; 
+  uint64 *h_device_col_cnt = new uint64[num_devices];
   uint64 *d_device_col_cnt = nullptr;
   ConvertLidToGid(num_seeds, d_seeds, d_device_vids, context->rank);
   Cluster(num_devices, d_device_vids, num_seeds, d_seeds, fanout, 
-          h_device_col_ptr, h_device_col_cnt, &d_device_col_cnt, &d_seeds_global);
+          h_device_col_ptr, h_device_col_cnt, &d_device_col_cnt);
   
   //convert local id to global id done in shuffle
   uint64 num_frontier;
   uint64 *d_frontier;
-  uint64 h_device_offset[num_devices + 1];
+  uint64 *h_device_offset = new uint64[num_devices + 1];
   Shuffle(num_devices, h_device_col_ptr, h_device_col_cnt, d_device_col_cnt,
-          d_seeds_global, num_frontier, h_device_offset, &d_frontier,
+          d_seeds, num_frontier, h_device_offset, &d_frontier,
           context->rank, context->nccl_comm);
 
   //convert global id to local id done in sampling
   uint64 *d_local_out_cols;
-  ConvertGidToLid(num_frontier, frontier, d_device_vids, context->rank);
-  Sample(hg, num_frontier, frontier, fanout, replace, &d_local_out_cols);
-  //todo convert local id to global id
+  ConvertGidToLid(num_frontier, d_frontier, d_device_vids, context->rank);
+  Sample(hg.sptr(), num_frontier, d_frontier, fanout, replace, &d_local_out_cols);
   
   //final result
   uint64 *d_out_ptr, *d_global_out_cols;
   ConvertLidToGid(num_frontier * fanout, d_local_out_cols, d_device_vids, context->rank);
   Reshuffle(fanout, num_devices, h_device_offset, d_local_out_cols, h_device_col_ptr,
-            num_seeds, d_out_ptr, d_global_out_cols, context->rank, context->nccl_comm);
+            num_seeds, &d_out_ptr, &d_global_out_cols, context->rank, context->nccl_comm);
 
   //现在的结果存成了csr，存储在d_out_ptr，d_global_out_cols里
   std::shared_ptr<HeteroSubgraph> subg(new HeteroSubgraph);
