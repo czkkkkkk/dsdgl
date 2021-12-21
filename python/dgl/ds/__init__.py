@@ -9,14 +9,14 @@ DS_CONTEXT = None
 
 def init(rank, world_size):
     global DS_CONTEXT
-    DS_CONTEXT = DSContext.create()
+    DS_CONTEXT = DSContext.create(rank)
 
     id = _CAPI_DGLNCCLGetUniqueId(rank)
     id = th.ByteTensor(id)
     th.distributed.broadcast(id, 0)
     _CAPI_DGLNCCLInit(bytearray(id.byte()), rank, world_size, DS_CONTEXT)
 
-def sample_neighbors(g, seeds, fanout):
-    return sampling.sample_neighbors(g, seeds, fanout, DS_CONTEXT)
+def sample_neighbors(g, device_min_vids, nodes, fanout):
+    return sampling.sample_neighbors(g, device_min_vids, nodes, fanout, DS_CONTEXT)
 
 _init_api("dgl.ds")
