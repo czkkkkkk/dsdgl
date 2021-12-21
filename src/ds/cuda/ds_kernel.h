@@ -11,17 +11,31 @@ const int WARP_SIZE = 32;
 const int BLOCK_SIZE = 8 * WARP_SIZE;
 const int BLOCK_NUM = 2;
 
-void Cluster( int num_devices, uint64 *device_vid_base,
-              uint64 num_seed, uint64 *seeds, int fanout,
-              uint64 *device_col_ptr, uint64 *device_col_cnt, uint64 *d_device_col_cnt);
+void ConvertGidToLid(uint64 num_id, uint64 *global_id, uint64 *d_device_vids, int rank);
+
+void ConvertLidToGid(uint64 num_id, uint64 *local_id, uint64 *d_device_vids, int rank);
+
+void Cluster(int num_devices, uint64 *device_vid_base,
+             uint64 num_seed, uint64 *seeds, int fanout,
+             uint64 *device_col_ptr, uint64 *device_col_cnt, 
+             uint64 **d_device_col_cnt);
 
 void Shuffle(int num_devices, uint64 *device_col_ptr, uint64 *device_col_cnt, uint64 *d_device_col_cnt, 
              uint64 *seeds, uint64 &num_frontier, uint64 *device_offset, uint64 **frontier, 
              int rank, ncclComm_t &comm);
 
-void SampleNeighbors();
+void SampleNeighbors(int fanout, uint64 num_frontier, uint64 *frontier,
+                     uint64 *in_ptr, uint64 *in_index,
+                     uint64 **out_index);
 
-void Reshuffle();
+void reshuffle(int fanout,
+               int device_cnt, int *device_offset, int *cols,
+               int *device_col_ptr, int *clustered_cols,
+               int rank, ncclComm_t &comm, cudaStream_t &s);
+
+void Reshuffle(int fanout, int num_devices, uint64 *device_offset, uint64 *cols,
+               uint64 *device_col_ptr, uint64 num_seed, uint64 **out_ptr, uint64 **out_cols,
+               int rank, ncclComm_t &comm);
 
 void show(uint64 len, uint64 *d_data);
 

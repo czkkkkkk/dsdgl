@@ -16,99 +16,70 @@ using namespace dgl::runtime;
 namespace dgl {
 namespace ds {
 
-HeteroSubgraph SampleNeighbors(
+void Sample(
     const HeteroGraphPtr hg,
-    const IdArray& nodes,
+    uint64 num_frontier,
+    uint64 *frontier,
     int fanout,
-    EdgeDir dir,
-    const std::vector<FloatArray>& prob,
     bool replace,
-    ) {
-      // std::vector<HeteroGraphPtr> subrels(hg->NumEdgeTypes());
-      // std::vector<IdArray> induced_edges(hg->NumEdgeTypes());
-      // dgl_type_t etype = 0;
-      // auto pair = hg->meta_graph()->FindEdge(etype);
-      // const dgl_type_t src_vtype = pair.first;
-      // const dgl_type_t dst_vtype = pair.second;
-      // const IdArray nodes_ntype = nodes[(dir == EdgeDir::kOut)? src_vtype : dst_vtype];
-      // const int64_t num_nodes = nodes_ntype->shape[0];
-
-      // auto req_fmt = (dir == EdgeDir::kOut)? CSR_CODE : CSC_CODE;
-      // auto avail_fmt = hg->SelectFormat(etype, req_fmt);
-      // COOMatrix sampled_coo;
-
-      // switch (avail_fmt) {
-      //   case SparseFormat::kCOO:
-      //     if (dir == EdgeDir::kIn) {
-      //       sampled_coo = aten::COOTranspose(aten::COORowWiseSampling(
-      //         aten::COOTranspose(hg->GetCOOMatrix(etype)),
-      //         nodes_ntype, fanouts[etype], prob[etype], replace));
-      //     } else {
-      //       sampled_coo = aten::COORowWiseSampling(
-      //         hg->GetCOOMatrix(etype), nodes_ntype, fanouts[etype], prob[etype], replace);
-      //     }
-      //     break;
-      //   case SparseFormat::kCSR:
-      //     CHECK(dir == EdgeDir::kOut) << "Cannot sample out edges on CSC matrix.";
-      //     sampled_coo = aten::CSRRowWiseSampling(
-      //       hg->GetCSRMatrix(etype), nodes_ntype, fanouts[etype], prob[etype], replace);
-      //     break;
-      //   case SparseFormat::kCSC:
-      //     CHECK(dir == EdgeDir::kIn) << "Cannot sample in edges on CSR matrix.";
-      //     sampled_coo = aten::CSRRowWiseSampling(
-      //       hg->GetCSCMatrix(etype), nodes_ntype, fanouts[etype], prob[etype], replace);
-      //     sampled_coo = aten::COOTranspose(sampled_coo);
-      //     break;
-      //   default:
-      //     LOG(FATAL) << "Unsupported sparse format.";
-      // }
-      // subrels[etype] = UnitGraph::CreateFromCOO(
-      //   hg->GetRelationGraph(etype)->NumVertexTypes(), sampled_coo.num_rows, sampled_coo.num_cols,
-      //   sampled_coo.row, sampled_coo.col);
-      // induced_edges[etype] = sampled_coo.data;
-
-      HeteroSubgraph ret;
-      // ret.graph = CreateHeteroGraph(hg->meta_graph(), subrels, hg->NumVerticesPerType());
-      // ret.induced_vertices.resize(hg->NumVertexTypes());
-      // ret.induced_edges = std::move(induced_edges);
-      return ret;
-    }
+    uint64 **out_index) {
+  assert(hg->NumEdgeTypes() == 1);
+  dgl_type_t etype = 0;
+  CSRMatrix mat = hg->GetCSRMatrix(etype);
+  uint64 *in_ptr = static_cast<uint64*>(mat.indptr->data);
+  uint64 *in_index = static_cast<uint64*>(mat.indices->data);
+  SampleNeighbors(fanout, num_frontier, frontier, in_ptr, in_index, out_index);
+}
 
 DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
-    HeteroGraphRef hg = args[0];
-    IdArray min_ids = args[1];
-    IdArray nodes = args[2];
-    int fanout = args[3];
-    const std::string dir_str = args[4];
-    const auto& prob = ListValueToVector<FloatArray>(args[5]);
-    const bool replace = args[6];
-    DSContextRef context_ref = args[7];
-    auto* context = context_ref->GetContext();
+  HeteroGraphRef hg = args[0];
+  IdArray min_ids = args[1];
+  IdArray nodes = args[2];
+  int fanout = args[3];
+  const std::string dir_str = args[4];
+  const auto& prob = ListValueToVector<FloatArray>(args[5]);
+  const bool replace = args[6];
+  DSContextRef context_ref = args[7];
+  auto* context = context_ref->GetContext();
 
-    uint64 num_devices = min_ids->shape[0] - 1;
-    uint64 *d_device_vids = static_cast<uint64*>(min_ids->data);
-    uint64 num_seeds = nodes->shape[0];
-    uint64 *d_seeds = static_cast<uint64*>(nodes->data);
-    uint64 *h_device_col_ptr = new uint64[num_devices + 1]; 
-    uint64 *h_device_col_cnt = new uint64[num_devices];
-    uint64 *d_device_col_cnt = nullptr;
-    Cluster(num_devices, d_device_vids, num_seeds, d_seeds, fanout, 
-            h_device_col_ptr, h_device_col_cnt, &d_device_col_cnt);
-    
-    uint64 num_frontier;
-    int *d_frontier;
-    int h_device_offset[num_devices + 1];
-    Shuffle(num_devices, h_device_col_ptr, h_device_col_cnt, d_device_col_cnt,
-            d_seeds, num_frontier, h_device_offset, &d_frontier,
-            context->rank, context->nccl_comm);
+  uint64 num_devices = min_ids->shape[0] - 1;
+  uint64 *d_device_vids = static_cast<uint64*>(min_ids->data);
+  uint64 num_seeds = nodes->shape[0];
+  uint64 *d_seeds = static_cast<uint64*>(nodes->data); //local id
+  uint64 h_device_col_ptr[num_devices + 1]; 
+  uint64 h_device_col_cnt[num_devices];
+  uint64 *d_device_col_cnt = nullptr;
+  ConvertLidToGid(num_seeds, d_seeds, d_device_vids, context->rank);
+  Cluster(num_devices, d_device_vids, num_seeds, d_seeds, fanout, 
+          h_device_col_ptr, h_device_col_cnt, &d_device_col_cnt, &d_seeds_global);
+  
+  //convert local id to global id done in shuffle
+  uint64 num_frontier;
+  uint64 *d_frontier;
+  uint64 h_device_offset[num_devices + 1];
+  Shuffle(num_devices, h_device_col_ptr, h_device_col_cnt, d_device_col_cnt,
+          d_seeds_global, num_frontier, h_device_offset, &d_frontier,
+          context->rank, context->nccl_comm);
 
-    std::shared_ptr<HeteroSubgraph> subg(new HeteroSubgraph);
-    // *subg = ds::SampleNeighbors(
-    //     hg.sptr(), min_ids, nodes, fanout, dir_str, prob, replace, context);
+  //convert global id to local id done in sampling
+  uint64 *d_local_out_cols;
+  ConvertGidToLid(num_frontier, frontier, d_device_vids, context->rank);
+  Sample(hg, num_frontier, frontier, fanout, replace, &d_local_out_cols);
+  //todo convert local id to global id
+  
+  //final result
+  uint64 *d_out_ptr, *d_global_out_cols;
+  ConvertLidToGid(num_frontier * fanout, d_local_out_cols, d_device_vids, context->rank);
+  Reshuffle(fanout, num_devices, h_device_offset, d_local_out_cols, h_device_col_ptr,
+            num_seeds, d_out_ptr, d_global_out_cols, context->rank, context->nccl_comm);
 
-    *rv = HeteroSubgraphRef(subg);
-  });
+  //现在的结果存成了csr，存储在d_out_ptr，d_global_out_cols里
+  std::shared_ptr<HeteroSubgraph> subg(new HeteroSubgraph);
+  // *subg = ds::SampleNeighbors(
+  //     hg.sptr(), min_ids, nodes, fanout, dir_str, prob, replace, context);
+  *rv = HeteroSubgraphRef(subg);
+});
 
 }
 }
