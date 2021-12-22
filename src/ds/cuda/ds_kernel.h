@@ -19,6 +19,7 @@ const int BLOCK_NUM = 2;
  * @param rank            current device/partition
  */
 void ConvertGidToLid(uint64 num_id, uint64 *global_id, uint64 *d_device_vids, int rank);
+//void ConvertGidToLid(IdArray d_global_vids, IdArray d_device_vids, int rank);
 
 /**
  * @brief convert local id to global id in each partition
@@ -92,8 +93,8 @@ void SampleNeighbors(int fanout, uint64 num_frontier, uint64 *frontier,
  * @param comm              nccl comm
  */
 void Reshuffle(int fanout, int num_devices, uint64 *device_offset, uint64 *cols, uint64 *edges,
-               uint64 *device_col_ptr, uint64 num_seed, uint64 **out_ptr, 
-               uint64 **out_cols, uint64 **out_edges,
+               uint64 *device_col_ptr, uint64 num_seed, uint64 *out_ptr, 
+               uint64 *out_cols, uint64 *out_edges,
                int rank, ncclComm_t &comm);
 
 void show(uint64 len, uint64 *d_data);

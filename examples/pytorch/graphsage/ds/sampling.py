@@ -14,6 +14,7 @@ import numpy as np
 import time
 import dgl.ds as ds
 import dgl.backend as F
+import time
 #from dgl.ds.graph_partition_book import *
 
 def setup(rank, world_size):
@@ -27,12 +28,14 @@ def cleanup():
     dist.destroy_process_group()
 
 class NeighborSampler(object):
-    def __init__(self, g, device_min_vids, fanouts, sample_neighbors, load_feat=True):
+    def __init__(self, g, num_vertices, device_min_vids, device_min_eids, fanouts, sample_neighbors, load_feat=True):
         self.g = g
+        self.num_vertices = num_vertices
         self.fanouts = fanouts
         self.sample_neighbors = sample_neighbors
         self.load_feat = load_feat
         self.device_min_vids = device_min_vids
+        self.device_min_eids = device_min_eids
 
     '''
     suppose g, seed_nodes are all on gpu
@@ -44,8 +47,9 @@ class NeighborSampler(object):
             print("seeds:", seeds)
             print("fanout:", [fanout])
             # For each seed node, sample ``fanout`` neighbors.
-            frontier = self.sample_neighbors(self.g, self.device_min_vids, seeds, 
-                                             fanout)
+            frontier = self.sample_neighbors(self.g, self.num_vertices,
+                                             self.device_min_vids, self.device_min_eids,
+                                             seeds, fanout)
             # Then we compact the frontier into a bipartite graph for message passing.
             block = dgl.to_block(frontier, seeds)
             # Obtain the seed nodes for next layer.
@@ -57,14 +61,13 @@ class NeighborSampler(object):
 
 def run(rank, args):
     print('Start rank', rank, 'with args:', args)
-
+    th.cuda.set_device(rank)
     setup(rank, args.n_ranks)
     ds.init(rank, args.n_ranks)
     
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
-    # print(g)
-
+    
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
 
@@ -75,14 +78,17 @@ def run(rank, args):
     train_g = train_g.to(device)
     #todo: transfer gpb to gpu
 
-    print(F.tensor(gpb._max_node_ids, dtype=F.int64).to(device))
-    print(train_nid.dtype)
-    print(train_g)
-    #pb = DsDevicePartitionBook(gpb, device)
-    #print(pb._max_node_ids_gpu)
-    #print(train_g.ndata)
-    min_ids = [0] + list(gpb._max_node_ids)
-    sampler = NeighborSampler(g, F.tensor(min_ids, dtype=F.int64).to(device), 
+    print(gpb._max_node_ids)
+    print(gpb._max_edge_ids)
+    print(node_feats['_N/features'].shape)
+    min_vids = [0] + list(gpb._max_node_ids)
+    min_eids = [0] + list(gpb._max_edge_ids)
+    time.sleep(2)
+    num_vertices = gpb._max_node_ids[-1]
+    print("num vertices:", num_vertices)
+    sampler = NeighborSampler(g, num_vertices,
+                              F.tensor(min_vids, dtype=F.int64).to(device),
+                              F.tensor(min_eids, dtype=F.int64).to(device),
                               [int(fanout) for fanout in args.fan_out.split(',')],
                               dgl.ds.sample_neighbors)
 

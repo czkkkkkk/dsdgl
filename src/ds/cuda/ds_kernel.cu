@@ -120,24 +120,24 @@ T* Convert(thrust::device_ptr<T> ptr) {
 
 void Scatter(thrust::device_ptr<uint64> send_buffer, uint64 *send_offset,
              thrust::device_ptr<uint64> recv_buffer, uint64 *recv_offset,
-             int group_size, int rank, ncclComm_t &comm, cudaStream_t &s, uint64 seg = 1) {
-  CUDACHECK(cudaMemcpy(Convert(recv_buffer + recv_offset[rank]), 
-                       Convert(send_buffer + send_offset[rank]),
+             int group_size, int rank, ncclComm_t &comm, cudaStream_t &s, int seg = 1) {
+  CUDACHECK(cudaMemcpy(Convert(recv_buffer + recv_offset[rank] * seg), 
+                       Convert(send_buffer + send_offset[rank] * seg),
                        (send_offset[rank + 1] - send_offset[rank]) * seg * sizeof(uint64), 
                        cudaMemcpyDeviceToDevice));
   for (int i = 0; i < group_size; i++) {
     if (i == rank) {
       for (int j = 0; j < group_size; j++) {
         if (j != rank) {
-          NCCLCHECK(ncclSend((const void*)Convert(send_buffer + send_offset[j]),
+          NCCLCHECK(ncclSend((const void*)Convert(send_buffer + send_offset[j] * seg),
                              (send_offset[j + 1] - send_offset[j]) * seg,
                              ncclUint64, j, comm, s));
         }
       }
     } else {
-      NCCLCHECK(ncclRecv((void*)Convert(recv_buffer + recv_offset[i]),
-                          (recv_offset[i + 1] - recv_offset[i]) * seg,
-                          ncclUint64, i, comm, s));
+      NCCLCHECK(ncclRecv((void*)Convert(recv_buffer + recv_offset[i] * seg),
+                         (recv_offset[i + 1] - recv_offset[i]) * seg,
+                         ncclUint64, i, comm, s));
     }
   }
   CUDACHECK(cudaStreamSynchronize(s));
@@ -235,20 +235,18 @@ void SampleNeighbors(int fanout, uint64 num_frontier, uint64 *frontier,
 }
 
 void Reshuffle(int fanout, int num_devices, uint64 *device_offset, uint64 *cols, uint64 *edges,
-               uint64 *device_col_ptr, uint64 num_seed, uint64 **out_ptr, 
-               uint64 **out_cols, uint64 **out_edges,
+               uint64 *device_col_ptr, uint64 num_seed, uint64 *out_ptr, 
+               uint64 *out_cols, uint64 *out_edges,
                int rank, ncclComm_t &comm) {
-  cudaMalloc((void**)&(*out_ptr), sizeof(uint64) * (num_seed + 1));
-  thrust::device_ptr<uint64> d_out_ptr(*out_ptr);
+  thrust::device_ptr<uint64> d_out_ptr(out_ptr);
   thrust::fill(d_out_ptr, d_out_ptr + num_seed, fanout);
   thrust::exclusive_scan(d_out_ptr, d_out_ptr + num_seed + 1, d_out_ptr);
-  cudaMalloc((void**)&(*out_cols), sizeof(uint64) * num_seed * fanout);
   cudaStream_t s = 0;
   Scatter(thrust::device_ptr<uint64>(cols), device_offset, 
-          thrust::device_ptr<uint64>(*out_cols), device_col_ptr,
+          thrust::device_ptr<uint64>(out_cols), device_col_ptr,
           num_devices, rank, comm, s, fanout);
   Scatter(thrust::device_ptr<uint64>(edges), device_offset, 
-          thrust::device_ptr<uint64>(*out_edges), device_col_ptr,
+          thrust::device_ptr<uint64>(out_edges), device_col_ptr,
           num_devices, rank, comm, s, fanout);
 }
 

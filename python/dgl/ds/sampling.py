@@ -43,7 +43,7 @@ __all__ = [
 #     #     utils.set_new_frames(ret, edge_frames=edge_frames)
 #     return ret
 
-def sample_neighbors(g, device_min_vids, device_min_eids, nodes, fanout, context, edge_dir='in', prob=None, replace=True,
+def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, fanout, context, edge_dir='in', prob=None, replace=True,
                      copy_ndata=True, copy_edata=True):
     prob_arrays = [nd.array([], ctx=nd.cpu())] * len(g.etypes)
     print("graph:", g._graph)
@@ -58,7 +58,7 @@ def sample_neighbors(g, device_min_vids, device_min_eids, nodes, fanout, context
     device_min_vids = F.to_dgl_nd(device_min_vids)
     device_min_eids = F.to_dgl_nd(device_min_eids)
     nodes = F.to_dgl_nd(nodes)
-    subgidx = _CAPI_DGLDSSampleNeighbors(g._graph, device_min_vids, device_min_eids, nodes, 
+    subgidx = _CAPI_DGLDSSampleNeighbors(g._graph, num_vertices, device_min_vids, device_min_eids, nodes, 
                                          fanout, edge_dir, prob_arrays, replace, context)
     induced_edges = subgidx.induced_edges
     ret = DGLHeteroGraph(subgidx.graph, g.ntypes, g.etypes)
