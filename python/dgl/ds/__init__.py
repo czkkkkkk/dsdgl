@@ -16,7 +16,7 @@ def init(rank, world_size):
     th.distributed.broadcast(id, 0)
     _CAPI_DGLNCCLInit(bytearray(id.byte()), rank, world_size, DS_CONTEXT)
 
-def sample_neighbors(g, device_min_vids, nodes, fanout):
-    return sampling.sample_neighbors(g, device_min_vids, nodes, fanout, DS_CONTEXT)
+def sample_neighbors(g, device_min_vids, device_min_eids, nodes, fanout):
+    return sampling.sample_neighbors(g, device_min_vids, device_min_eids, nodes, fanout, DS_CONTEXT)
 
 _init_api("dgl.ds")

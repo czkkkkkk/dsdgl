@@ -55,8 +55,7 @@ __global__
 void _CountDeviceVerticesKernel(int device_cnt, 
                                 uint64 *device_vid_base,
                                 uint64 num_seed, 
-                                uint64 *seeds, 
-                                uint64 num_picks, 
+                                uint64 *seeds,
                                 uint64 *device_col_cnt) {
   __shared__ uint64 local_count[9];
   __shared__ uint64 device_vid[9];
@@ -78,7 +77,7 @@ void _CountDeviceVerticesKernel(int device_cnt,
       ++device_id;
     }
     --device_id;
-    atomicAdd(&local_count[device_id], num_picks);
+    atomicAdd(&local_count[device_id], 1);
     idx += BLOCK_NUM * BLOCK_SIZE;
   }
 
@@ -91,7 +90,7 @@ void _CountDeviceVerticesKernel(int device_cnt,
 }
 
 void Cluster( int device_cnt, uint64 *device_vid_base,
-              uint64 num_seed, uint64 *seeds, int fanout,
+              uint64 num_seed, uint64 *seeds,
               uint64 *device_col_ptr, uint64 *device_col_cnt, 
               uint64 **d_device_col_cnt) {
   thrust::device_ptr<uint64> d_seeds(seeds);
@@ -104,7 +103,7 @@ void Cluster( int device_cnt, uint64 *device_vid_base,
   CUDACHECK(cudaMemset(d_device_col_ptr, 0, sizeof(uint64) * (device_cnt + 1)));
 
   _CountDeviceVerticesKernel<<<BLOCK_NUM, BLOCK_SIZE>>>(device_cnt, device_vid_base,
-                                                        num_seed, seeds, fanout,
+                                                        num_seed, seeds,
                                                         *d_device_col_cnt);
   
   thrust::exclusive_scan(thrust::device_ptr<uint64>(*d_device_col_cnt), 
@@ -121,23 +120,23 @@ T* Convert(thrust::device_ptr<T> ptr) {
 
 void Scatter(thrust::device_ptr<uint64> send_buffer, uint64 *send_offset,
              thrust::device_ptr<uint64> recv_buffer, uint64 *recv_offset,
-             int group_size, int rank, ncclComm_t &comm, cudaStream_t &s) {
+             int group_size, int rank, ncclComm_t &comm, cudaStream_t &s, uint64 seg = 1) {
   CUDACHECK(cudaMemcpy(Convert(recv_buffer + recv_offset[rank]), 
                        Convert(send_buffer + send_offset[rank]),
-                       (send_offset[rank + 1] - send_offset[rank]) * sizeof(uint64), 
+                       (send_offset[rank + 1] - send_offset[rank]) * seg * sizeof(uint64), 
                        cudaMemcpyDeviceToDevice));
   for (int i = 0; i < group_size; i++) {
     if (i == rank) {
       for (int j = 0; j < group_size; j++) {
         if (j != rank) {
           NCCLCHECK(ncclSend((const void*)Convert(send_buffer + send_offset[j]),
-                             send_offset[j + 1] - send_offset[j],
+                             (send_offset[j + 1] - send_offset[j]) * seg,
                              ncclUint64, j, comm, s));
         }
       }
     } else {
       NCCLCHECK(ncclRecv((void*)Convert(recv_buffer + recv_offset[i]),
-                          recv_offset[i + 1] - recv_offset[i],
+                          (recv_offset[i + 1] - recv_offset[i]) * seg,
                           ncclUint64, i, comm, s));
     }
   }
@@ -183,8 +182,10 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
     uint64 *frontier,
     uint64 *in_ptr, 
     uint64 *in_index,
+    uint64 *edge_index,
     uint64 *out_ptr, 
-    uint64 *out_index) {
+    uint64 *out_index,
+    uint64 *out_edges) {
   assert(blockDim.x == WARP_SIZE);
   constexpr int NUM_RNG = ((WARP_SIZE*BLOCK_ROWS)+255)/256;
   __shared__ curandState rng_array[NUM_RNG];
@@ -206,17 +207,19 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
       const uint64 edge = curand(rng) % deg;
       const uint64 out_idx = out_row_start + idx;
       out_index[out_idx] = in_index[in_row_start + edge];
+      out_edges[out_idx] = edge_index[in_row_start + edge];
     }
     out_row += gridDim.x * blockDim.y;
   }
 }
 
 void SampleNeighbors(int fanout, uint64 num_frontier, uint64 *frontier,
-                     uint64 *in_ptr, uint64 *in_index,
-                     uint64 **out_index) {
+                     uint64 *in_ptr, uint64 *in_index, uint64 *edge_index,
+                     uint64 **out_index, uint64 **out_edges) {
   uint64 *out_ptr;
   cudaMalloc((void**)&out_ptr, sizeof(uint64) * (num_frontier + 1));
   cudaMalloc((void**)&(*out_index), sizeof(uint64) * num_frontier * fanout);
+  cudaMalloc((void**)&(*out_edges), sizeof(uint64) * num_frontier * fanout);
   thrust::device_ptr<uint64> d_out_ptr(out_ptr);
   thrust::fill(d_out_ptr, d_out_ptr + num_frontier, uint64(fanout));
   thrust::exclusive_scan(d_out_ptr, d_out_ptr + num_frontier + 1, d_out_ptr);
@@ -225,24 +228,28 @@ void SampleNeighbors(int fanout, uint64 num_frontier, uint64 *frontier,
   const dim3 grid((num_frontier + block.y - 1) / block.y);
   cudaStream_t s = 0;
   _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block, 0, s>>>(
-    fanout, num_frontier, frontier, in_ptr, in_index, out_ptr, *out_index
+    fanout, num_frontier, frontier, in_ptr, in_index, edge_index,
+    out_ptr, *out_index, *out_edges
   );
   cudaStreamSynchronize(s);
 }
 
-void Reshuffle(int fanout, int num_devices, uint64 *device_offset, uint64 *cols,
-               uint64 *device_col_ptr, uint64 num_seed, uint64 **out_ptr, uint64 **out_cols,
+void Reshuffle(int fanout, int num_devices, uint64 *device_offset, uint64 *cols, uint64 *edges,
+               uint64 *device_col_ptr, uint64 num_seed, uint64 **out_ptr, 
+               uint64 **out_cols, uint64 **out_edges,
                int rank, ncclComm_t &comm) {
   cudaMalloc((void**)&(*out_ptr), sizeof(uint64) * (num_seed + 1));
   thrust::device_ptr<uint64> d_out_ptr(*out_ptr);
   thrust::fill(d_out_ptr, d_out_ptr + num_seed, fanout);
   thrust::exclusive_scan(d_out_ptr, d_out_ptr + num_seed + 1, d_out_ptr);
   cudaMalloc((void**)&(*out_cols), sizeof(uint64) * num_seed * fanout);
-  thrust::device_ptr<uint64> d_cols(cols), d_out_cols(*out_cols);
   cudaStream_t s = 0;
   Scatter(thrust::device_ptr<uint64>(cols), device_offset, 
           thrust::device_ptr<uint64>(*out_cols), device_col_ptr,
-          num_devices, rank, comm, s);
+          num_devices, rank, comm, s, fanout);
+  Scatter(thrust::device_ptr<uint64>(edges), device_offset, 
+          thrust::device_ptr<uint64>(*out_edges), device_col_ptr,
+          num_devices, rank, comm, s, fanout);
 }
 
 void show(uint64 len, uint64 *d_data) {
@@ -260,4 +267,21 @@ void showc(uint64 len, uint64 *data) {
     printf("%llu ", data[i]);
   }
   printf("\n");
+}
+
+void PingPong(int rank, ncclComm_t &comm) {
+  int *data;
+  cudaMalloc((void**)&data, sizeof(int));
+  int a = 11;
+  cudaMemcpy(data, &a, sizeof(int), cudaMemcpyHostToDevice);
+  cudaStream_t s = 0;
+  if (rank == 0) {
+    printf("rank 0 send %d\n", a);
+    NCCLCHECK(ncclSend((const void*)data, 1, ncclInt, 1, comm, s));
+  } else {
+    NCCLCHECK(ncclRecv((void*)data, 1, ncclInt, 0, comm, s));
+    cudaMemcpy(&a, data, sizeof(int), cudaMemcpyDeviceToHost);
+    printf("rank: %d recv %d\n", a);
+  }
+  CUDACHECK(cudaStreamSynchronize(s));
 }
