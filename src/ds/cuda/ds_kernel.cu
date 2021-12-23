@@ -6,6 +6,7 @@
 #include <thrust/device_vector.h>
 #include <memory>
 #include <iostream>
+#include "dmlc/logging.h"
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
@@ -24,6 +25,9 @@
     exit(EXIT_FAILURE);                             \
   }                                                 \
 } while(0)
+
+namespace dgl {
+namespace ds {
 
 __global__
 void _MinusKernel(uint64 num_id, uint64 *global_id, uint64 *d_device_vids, int rank) {
@@ -73,7 +77,7 @@ void _CountDeviceVerticesKernel(int device_cnt,
   while (idx < num_seed) {
     device_id = 0;
     vid = seeds[idx];
-    while(device_id + 1 < device_cnt && device_vid[device_id + 1] <= vid) {
+    while (device_id + 1 < device_cnt && device_vid[device_id + 1] <= vid) {
       ++device_id;
     }
     atomicAdd(&local_count[device_id], 1);
@@ -126,6 +130,7 @@ void Scatter(thrust::device_ptr<uint64> send_buffer, uint64 *send_offset,
                        Convert(send_buffer + send_offset[rank] * seg),
                        (send_offset[rank + 1] - send_offset[rank]) * seg * sizeof(uint64), 
                        cudaMemcpyDeviceToDevice));
+  ncclGroupStart();
   for (int i = 0; i < group_size; i++) {
     if (i == rank) {
       for (int j = 0; j < group_size; j++) {
@@ -141,6 +146,7 @@ void Scatter(thrust::device_ptr<uint64> send_buffer, uint64 *send_offset,
                          ncclUint64, i, comm, s));
     }
   }
+  ncclGroupEnd();
   CUDACHECK(cudaStreamSynchronize(s));
 }
 
@@ -169,7 +175,8 @@ void Shuffle(int device_cnt, uint64 *device_col_ptr, uint64 *device_col_cnt, uin
     device_offset[i] = device_offset[i-1] + device_recv_cnt[i-1];
   }
   num_frontier = device_offset[device_cnt];
-  CUDACHECK(cudaMalloc((void**)&(*frontier), sizeof(uint64)*num_frontier));
+  // FIXME: NCCL will hang if num_frontier is 0
+  CUDACHECK(cudaMalloc((void**)frontier, sizeof(uint64)* num_frontier));
   thrust::device_ptr<uint64> d_seeds(seeds), d_frontier(*frontier);
 
   Scatter(d_seeds, device_col_ptr,
@@ -290,4 +297,7 @@ void PingPong(int rank, ncclComm_t &comm) {
     printf("rank: %d recv %d\n", a);
   }
   CUDACHECK(cudaStreamSynchronize(s));
+}
+
+}
 }
