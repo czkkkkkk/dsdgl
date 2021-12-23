@@ -73,10 +73,9 @@ void _CountDeviceVerticesKernel(int device_cnt,
   while (idx < num_seed) {
     device_id = 0;
     vid = seeds[idx];
-    while (device_vid[device_id] <= vid) {
+    while (device_id + 1 < device_cnt && device_vid[device_id + 1] <= vid) {
       ++device_id;
     }
-    --device_id;
     atomicAdd(&local_count[device_id], 1);
     idx += BLOCK_NUM * BLOCK_SIZE;
   }
