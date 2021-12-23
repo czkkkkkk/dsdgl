@@ -7,6 +7,9 @@
 
 using uint64 = unsigned long long int;
 
+namespace dgl {
+namespace ds {
+
 const int WARP_SIZE = 32;
 const int BLOCK_SIZE = 8 * WARP_SIZE;
 const int BLOCK_NUM = 2;
@@ -102,5 +105,8 @@ void show(uint64 len, uint64 *d_data);
 void showc(uint64 len, uint64 *data);
 
 void PingPong(int rank, ncclComm_t &comm);
+
+}
+}
 
 #endif
