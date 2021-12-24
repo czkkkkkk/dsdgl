@@ -12,13 +12,15 @@ namespace dgl {
 namespace ds {
 
 struct DSContext {
+  int rank;
   ncclComm_t nccl_comm;
 };
 
 class DSContextObject : public Object {
  public:
-  DSContextObject() {
+  DSContextObject(int rank) {
     ds_context_ = std::make_shared<DSContext>();
+    ds_context_->rank = rank;
   }
   DSContext* GetContext() const { return ds_context_.get(); }
 

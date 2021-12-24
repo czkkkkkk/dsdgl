@@ -4,7 +4,7 @@ from .._ffi.function import _init_api
 @register_object
 class DSContext(ObjectBase):
   @staticmethod
-  def create():
-    return _CAPI_DGLCreateDSContext()
+  def create(rank):
+    return _CAPI_DGLCreateDSContext(rank)
 
-_init_api("dgl.ds")
+_init_api("dgl.ds.context")

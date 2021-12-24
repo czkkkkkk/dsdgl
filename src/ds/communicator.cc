@@ -5,6 +5,7 @@
 #include <dgl/runtime/container.h>
 #include <dgl/runtime/ndarray.h>
 #include "dmlc/logging.h"
+#include <cuda_runtime.h>
 
 #include "context.h"
 
@@ -36,6 +37,7 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLNCCLInit")
 
     ncclUniqueId nccl_id;
     memcpy(nccl_id.internal, id_str.c_str(), NCCL_UNIQUE_ID_BYTES);
+    cudaSetDevice(rank);
     ncclCommInitRank(&context->nccl_comm, world_size, nccl_id, rank);
     LOG(INFO) << "Rank " + std::to_string(rank) + " successfully build nccl communicator";
   });
