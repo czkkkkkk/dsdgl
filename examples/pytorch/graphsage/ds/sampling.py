@@ -52,6 +52,8 @@ class NeighborSampler(object):
                                              seeds, fanout)
             # Then we compact the frontier into a bipartite graph for message passing.
             block = dgl.to_block(frontier, seeds)
+            print("finish converting")
+            break
             # Obtain the seed nodes for next layer.
             seeds = block.srcdata[dgl.NID]
 
@@ -74,8 +76,9 @@ def run(rank, args):
     #tansfer graph and train nodes to gpu
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
-    train_g = g.formats(['csc'])
+    train_g = g.formats(['csr'])
     train_g = train_g.to(device)
+    print(train_g)
     #todo: transfer gpb to gpu
 
     print(gpb._max_node_ids)
@@ -86,7 +89,7 @@ def run(rank, args):
     time.sleep(2)
     num_vertices = gpb._max_node_ids[-1]
     print("num vertices:", num_vertices)
-    sampler = NeighborSampler(g, num_vertices,
+    sampler = NeighborSampler(train_g, num_vertices,
                               F.tensor(min_vids, dtype=F.int64).to(device),
                               F.tensor(min_eids, dtype=F.int64).to(device),
                               [int(fanout) for fanout in args.fan_out.split(',')],

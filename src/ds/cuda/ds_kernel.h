@@ -75,7 +75,7 @@ void Shuffle(int num_devices, uint64 *device_col_ptr, uint64 *device_col_cnt, ui
  */
 void SampleNeighbors(int fanout, uint64 num_frontier, uint64 *frontier,
                      uint64 *in_ptr, uint64 *in_index, uint64 *edge_index,
-                     uint64 **out_index, uint64 **out_edges);
+                     uint64 **out_index, uint64 **out_edges, int rank);
 
 /**
  * @brief send the sampled results back to the original devices

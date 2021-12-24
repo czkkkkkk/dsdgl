@@ -60,9 +60,9 @@ def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, f
     nodes = F.to_dgl_nd(nodes)
     subgidx = _CAPI_DGLDSSampleNeighbors(g._graph, num_vertices, device_min_vids, device_min_eids, nodes, 
                                          fanout, edge_dir, prob_arrays, replace, context)
-    induced_edges = subgidx.induced_edges
-    ret = DGLHeteroGraph(subgidx.graph, g.ntypes, g.etypes)
-
+    print("get graph back")
+    ret = DGLHeteroGraph(subgidx, g.ntypes, g.etypes)
+    print("finish covert")
     # todo zqh handle features
     # if copy_ndata:
     #     node_frames = utils.extract_node_subframes(g, None)
