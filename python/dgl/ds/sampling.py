@@ -43,7 +43,7 @@ __all__ = [
 #     #     utils.set_new_frames(ret, edge_frames=edge_frames)
 #     return ret
 
-def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, fanout, context, edge_dir='in', prob=None, replace=True,
+def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, fanout, global_nid_map, edge_dir='in', prob=None, replace=True,
                      copy_ndata=True, copy_edata=True):
     prob_arrays = [nd.array([], ctx=nd.cpu())] * len(g.etypes)
     print("graph:", g._graph)
@@ -51,17 +51,18 @@ def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, f
     print("device_min_eids:", device_min_eids)
     print("nodes:", nodes)
     print("fanout:", fanout)
-    print("context:", context)
     print("edge_dir:", edge_dir)
     print("prob_arrays:", prob_arrays)
     print("replace:", replace)
     device_min_vids = F.to_dgl_nd(device_min_vids)
     device_min_eids = F.to_dgl_nd(device_min_eids)
     nodes = F.to_dgl_nd(nodes)
+    global_nid_map = F.to_dgl_nd(global_nid_map)
     subgidx = _CAPI_DGLDSSampleNeighbors(g._graph, num_vertices, device_min_vids, device_min_eids, nodes, 
-                                         fanout, edge_dir, prob_arrays, replace, context)
+                                         fanout, edge_dir, prob_arrays, replace, global_nid_map)
     print("get graph back")
-    ret = DGLHeteroGraph(subgidx, g.ntypes, g.etypes)
+    # ret = DGLHeteroGraph(subgidx, g.ntypes, g.etypes)
+    ret = None
     print("finish covert")
     # todo zqh handle features
     # if copy_ndata:

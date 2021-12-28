@@ -60,6 +60,7 @@ void CheckVectorEq(const std::vector<T>& lhs, const std::vector<T>& rhs) {
   }
 }
 
+/*
 void _TestCluster(int world_size, const std::vector<IdType>& vid_base, const std::vector<IdType>& seeds) {
   cudaSetDevice(0);
   int n_seeds = seeds.size();
@@ -171,3 +172,4 @@ TEST(Sampling, Shuffle) {
   _TestShuffle(world_size, args, exp_output);
   // TODO: Add a test to consider the case when the output frontier is 0
 }
+*/
