@@ -35,6 +35,22 @@ void Sample(IdArray frontier, const HeteroGraphPtr hg, int fanout, bool replace,
   SampleNeighbors(frontier, csr_mat, fanout, neighbors, edges);
 }
 
+HeteroGraphPtr CreateCOO(uint64_t num_vertices, IdArray seeds, int fanout, IdArray dst) {
+  IdArray src;
+  Replicate(seeds, &src, fanout);
+  return UnitGraph::CreateFromCOO(1, num_vertices, num_vertices, src, dst);
+}
+
+void Show(IdArray array, int rank) {
+  IdArray host_array = array.CopyTo(DLContext({kDLCPU, 0}));
+  printf("rank %d ", rank);
+  uint64 *dst = host_array.Ptr<uint64>();
+  for (int i=0; i<host_array->shape[0]; i++) {
+    printf("%d ", dst[i]);
+  }
+  printf("\n");
+}
+
 DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   HeteroGraphRef hg = args[0];
@@ -47,16 +63,10 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   const auto& prob = ListValueToVector<FloatArray>(args[7]);
   const bool replace = args[8];
   IdArray global_nid_map = args[9];
+  const bool is_local = args[10];
   auto* context = DSContext::Global();
 
   int n_seeds = seeds->shape[0];
-  uint64 num_devices = min_vids->shape[0] - 1;
-  uint64 *d_device_vids = static_cast<uint64*>(min_vids->data);
-  uint64 *d_device_eids = static_cast<uint64*>(min_eids->data);
-  uint64 *d_seeds = static_cast<uint64*>(seeds->data); //local id
-  uint64 *h_device_col_ptr = new uint64[num_devices + 1];
-  uint64 *h_device_col_cnt = new uint64[num_devices];
-  uint64 *d_device_col_cnt = nullptr;
   int rank = context->rank;
   int world_size = context->world_size;
 
@@ -65,28 +75,34 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   if (dgl_context.device_type != DLDeviceType::kDLGPU) {
     LOG(FATAL) << "Seeds are not on GPUs";
   }
+
+  if (is_local) {
+    ConvertLidToGid(seeds, global_nid_map);
+  }
+
   // ConvertLidToGid(seeds, min_vids, context->rank);
   IdArray send_sizes, send_offset;
   Cluster(seeds, min_vids, world_size, &send_sizes, &send_offset);
   auto host_send_sizes = send_sizes.CopyTo(DLContext({kDLCPU, 0}));
   auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}));
-  
+
   IdArray frontier, host_recv_offset;
   Shuffle(seeds, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset);
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray neighbors, edges;
   Sample(frontier, hg.sptr(), fanout, replace, &neighbors, &edges);
+
   ConvertLidToGid(neighbors, global_nid_map);
+  
   IdArray reshuffled_neighbors;
   Reshuffle(neighbors, fanout, n_seeds, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &reshuffled_neighbors);
-  LOG(INFO) << "Reshuffled neibhgors: " << ToDebugString(reshuffled_neighbors);
+  // LOG(INFO) << "Reshuffled neibhgors: " << ToDebugString(reshuffled_neighbors);
   
-  /*
-  HeteroGraphPtr subg = UnitGraph::CreateFromCSR(1, num_seeds, num_seeds, 
-                                                 out_ptr, global_out_cols, global_out_edges);
+  // ConvertGidToLid(seeds, min_vids, rank);
+  HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, reshuffled_neighbors);
+
   *rv = HeteroGraphRef(subg);
-  */
 });
 
 }
