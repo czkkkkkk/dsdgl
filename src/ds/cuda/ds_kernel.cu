@@ -39,7 +39,7 @@ void _GidToLidKernel(IdType* global_ids, size_t size, IdType* min_vids, int rank
   int idx = blockDim.x * blockIdx.x + threadIdx.x;
   int base = min_vids[rank];
   while (idx < size) {
-    global_ids[idx] += base;
+    global_ids[idx] -= base;
     idx += BLOCK_NUM * BLOCK_SIZE;
   }
 }
@@ -122,13 +122,15 @@ void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdA
   IdType* recv_buffer_ptr = recv_buffer.Ptr<IdType>();
   IdType* send_offset_ptr = send_offset.Ptr<IdType>();
   IdType* recv_offset_ptr = recv_offset.Ptr<IdType>();
-  cudaMemcpy(recv_buffer_ptr + recv_offset_ptr[rank], send_buffer_ptr + send_offset_ptr[rank], (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * sizeof(IdType), cudaMemcpyDeviceToDevice);
+  cudaMemcpy(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, send_buffer_ptr + send_offset_ptr[rank] * expand_size, (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * sizeof(IdType), cudaMemcpyDeviceToDevice);
   ncclGroupStart();
   for(int r = 0; r < world_size; ++r) {
     if(r != rank) {
-      int send_size = (send_offset_ptr[r+1] - send_offset_ptr[r]) * expand_size;
-      int recv_size = (recv_offset_ptr[r+1] - recv_offset_ptr[r]) * expand_size;
-      ncclSend(send_buffer_ptr + send_offset_ptr[r], send_size, ncclUint64, r, nccl_comm, 0);
+      IdType send_size = (send_offset_ptr[r+1] - send_offset_ptr[r]) * expand_size;
+      IdType send_ptr = send_offset_ptr[r] * expand_size;
+      IdType recv_size = (recv_offset_ptr[r+1] - recv_offset_ptr[r]) * expand_size;
+      IdType recv_ptr = recv_offset_ptr[r] * expand_size;
+      ncclSend(send_buffer_ptr + send_ptr, send_size, ncclUint64, r, nccl_comm, 0);
       ncclRecv(recv_buffer_ptr + recv_offset_ptr[r], recv_size, ncclUint64, r, nccl_comm, 0);
     }
   }
@@ -222,6 +224,38 @@ void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_
   int shuffle_send_size = host_shuffle_send_offset.Ptr<IdType>()[world_size];
   *reshuffled_neighbors = IdArray::Empty({shuffle_send_size * fanout}, neighbors->dtype, neighbors->ctx);
   AllToAll(neighbors, host_shuffle_recv_offset, *reshuffled_neighbors, host_shuffle_send_offset, fanout, rank, world_size, nccl_comm);
+}
+
+template <int BLOCK_ROWS>
+__global__ void _CSRRowWiseReplicateKernel(
+    uint64 size,
+    uint64 *src,
+    uint64 *dst,
+    int fanout) {
+  uint64 out_row = blockIdx.x * blockDim.y + threadIdx.y;
+  while (out_row < size) {
+    const uint64 out_row_start = out_row * fanout;
+    for (int idx = threadIdx.x; idx < fanout; idx += blockDim.x) {
+      dst[out_row_start + idx] = src[out_row];
+    }
+    out_row += gridDim.x * blockDim.y;
+  }
+}
+
+void Replicate(IdArray src, IdArray *dst, int fanout) {
+  auto *src_ptr = src.Ptr<IdType>();
+  auto dgl_ctx = src->ctx;
+  int n_seeds = src->shape[0];
+  *dst = IdArray::Empty({n_seeds * fanout}, src->dtype, dgl_ctx);
+  auto *dst_ptr = (*dst).Ptr<IdType>();
+
+  constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
+  const dim3 block(WARP_SIZE, BLOCK_ROWS);
+  const dim3 grid((n_seeds + block.y - 1) / block.y);
+  _CSRRowWiseReplicateKernel<BLOCK_ROWS><<<grid, block>>>(
+    n_seeds, src_ptr, dst_ptr, fanout
+  );
+  CUDACHECK(cudaDeviceSynchronize());
 }
 
 }

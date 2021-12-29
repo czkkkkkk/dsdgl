@@ -37,6 +37,8 @@ void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* n
 
 void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_send_offset, IdArray host_shuffle_recv_offset, int rank, int world_size, ncclComm_t nccl_comm, IdArray* reshuffled_neighbors);
 
+void Replicate(IdArray src, IdArray *des, int fanout);
+
 }
 }
 
