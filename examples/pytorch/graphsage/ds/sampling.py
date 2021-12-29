@@ -61,6 +61,18 @@ class NeighborSampler(object):
 
         return blocks
 
+def test_sampling(g, rank):
+    device = th.device('cuda:%d' % rank)
+    if rank == 0:
+        seeds = th.LongTensor([11, 1, 12]).to(device)
+    else:
+        seeds = th.LongTensor([3, 4, 13]).to(device)
+    g = g.to(device)
+    min_vids = th.LongTensor([0, 10]).to(device)
+    min_eids = th.LongTensor([0, 10]).to(device)
+    ds.sample_neighbors(g, -1, min_vids, min_eids, seeds, 5, g.ndata[dgl.NID])
+
+
 def run(rank, args):
     print('Start rank', rank, 'with args:', args)
     th.cuda.set_device(rank)
@@ -69,6 +81,9 @@ def run(rank, args):
     
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
+
+    test_sampling(g, rank)
+    exit(0)
     
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])

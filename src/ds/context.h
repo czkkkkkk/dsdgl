@@ -12,35 +12,17 @@ namespace dgl {
 namespace ds {
 
 struct DSContext {
+  bool initialized = false;
+  int world_size;
   int rank;
   ncclComm_t nccl_comm;
-};
 
-class DSContextObject : public Object {
- public:
-  DSContextObject(int rank) {
-    ds_context_ = std::make_shared<DSContext>();
-    ds_context_->rank = rank;
+  static DSContext* Global() {
+    static DSContext instance;
+    return &instance;
   }
-  DSContext* GetContext() const { return ds_context_.get(); }
-
-  static constexpr const char* _type_key = "DSContext";
-  DGL_DECLARE_OBJECT_TYPE_INFO(DSContextObject, Object);
- private:
-  std::shared_ptr<DSContext> ds_context_;
-
 };
 
-class DSContextRef : public ObjectRef {
- public:
-  DSContextRef() = default;
-  explicit DSContextRef(std::shared_ptr<Object> obj): ObjectRef(obj) {}
-
-  const DSContextObject* operator->() const {
-    return static_cast<const DSContextObject*>(obj_.get());
-  }
-  using ContainerType = DSContextObject;
-};
 }
 }
 

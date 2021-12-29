@@ -32,8 +32,11 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLNCCLInit")
     std::string id_str = args[0];
     int rank = args[1];
     int world_size = args[2];
-    DSContextRef context_ref = args[3];
-    auto* context = context_ref->GetContext();
+    auto* context = DSContext::Global();
+
+    context->initialized = true;
+    context->world_size = world_size;
+    context->rank = rank;
 
     ncclUniqueId nccl_id;
     memcpy(nccl_id.internal, id_str.c_str(), NCCL_UNIQUE_ID_BYTES);
