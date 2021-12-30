@@ -98,7 +98,7 @@ def run(rank, args):
 
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
-
+    print(train_nid.size()[0] / 1024)
     #tansfer graph and train nodes to gpu
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
@@ -128,15 +128,20 @@ def run(rank, args):
         num_workers=0)
 
     cnt = 0
+    th.distributed.barrier()
+    total = 0
     for epoch in range(args.num_epochs):
         tic = time.time()
         for step, blocks in enumerate(dataloader):
-            print("batch:", cnt)
+            #print("batch:", cnt)
             cnt += 1
+            if cnt == 17:
+                break
+        cnt = 0
         toc = time.time()
-        print("sampling finish!!!!", rank)
-        print("time cost:", toc - tic)
-
+        total += (toc - tic)
+        print("rank:", rank, toc - tic)
+    print("rank:", rank, "sampling time:", total/epoch)
     cleanup()
   
 
@@ -145,11 +150,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='GCN')
     register_data_args(parser)
     parser.add_argument('--graph_name', default='test', type=str, help='graph name')
-    parser.add_argument('--part_config', default='./data/reddit.json', type=str, help='The path to the partition config file')
-    parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
-    parser.add_argument('--batch_size', default=1000, type=int, help='Batch size')
+    parser.add_argument('--part_config', default='./data-8/reddit.json', type=str, help='The path to the partition config file')
+    parser.add_argument('--n_ranks', default=8, type=int, help='Number of ranks')
+    parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
-    parser.add_argument('--num_epochs', default=1, type=int, help='Epochs')
+    parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
     args = parser.parse_args()
 
     mp.spawn(run,
