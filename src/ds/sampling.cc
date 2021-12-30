@@ -35,6 +35,17 @@ void Sample(IdArray frontier, const HeteroGraphPtr hg, int fanout, bool replace,
   SampleNeighbors(frontier, csr_mat, fanout, neighbors, edges);
 }
 
+void Check(IdArray array, uint64 limit) {
+  int size = array->shape[0];
+  uint64 *data = array.Ptr<IdType>();
+  uint64 *hdata = new uint64[size];
+  CUDACHECK(cudaMemcpy(hdata, data, sizeof(uint64) * size, cudaMemcpyDeviceToHost));
+  for (int i=0; i<size; i++) {
+    assert(hdata[i] < limit);
+  }
+  delete[] hdata;
+}
+
 HeteroGraphPtr CreateCOO(uint64_t num_vertices, IdArray seeds, int fanout, IdArray dst) {
   IdArray src;
   Replicate(seeds, &src, fanout);
@@ -80,7 +91,6 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
     ConvertLidToGid(seeds, global_nid_map);
   }
 
-  // ConvertLidToGid(seeds, min_vids, context->rank);
   IdArray send_sizes, send_offset;
   Cluster(seeds, min_vids, world_size, &send_sizes, &send_offset);
   auto host_send_sizes = send_sizes.CopyTo(DLContext({kDLCPU, 0}));

@@ -53,7 +53,8 @@ def run(args, device, data):
     test_nid = th.nonzero(~(test_g.ndata['train_mask'] | test_g.ndata['val_mask']), as_tuple=True)[0]
 
     dataloader_device = th.device('cpu')
-    if args.sample_gpu:
+    if args.sample_gpu >= 0 and args.num_workers == 0:
+        print("using gpu")
         train_nid = train_nid.to(device)
         # copy only the csc to the GPU
         train_g = train_g.formats(['csc'])
@@ -82,6 +83,8 @@ def run(args, device, data):
     # Training loop
     avg = 0
     iter_tput = []
+    cnt = 0
+    print(train_nfeat)
     for epoch in range(args.num_epochs):
         tic = time.time()
 
@@ -89,35 +92,37 @@ def run(args, device, data):
         # blocks.
         tic_step = time.time()
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
+            print("batch:", cnt)
+            cnt += 1
             # Load the input features as well as output labels
-            batch_inputs, batch_labels = load_subtensor(train_nfeat, train_labels,
-                                                        seeds, input_nodes, device)
-            blocks = [block.int().to(device) for block in blocks]
+            # batch_inputs, batch_labels = load_subtensor(train_nfeat, train_labels,
+            #                                             seeds, input_nodes, device)
+            # blocks = [block.int().to(device) for block in blocks]
 
-            # Compute loss and prediction
-            batch_pred = model(blocks, batch_inputs)
-            loss = loss_fcn(batch_pred, batch_labels)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            # # Compute loss and prediction
+            # batch_pred = model(blocks, batch_inputs)
+            # loss = loss_fcn(batch_pred, batch_labels)
+            # optimizer.zero_grad()
+            # loss.backward()
+            # optimizer.step()
 
-            iter_tput.append(len(seeds) / (time.time() - tic_step))
-            if step % args.log_every == 0:
-                acc = compute_acc(batch_pred, batch_labels)
-                gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
-                print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
-                    epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
-            tic_step = time.time()
+            # iter_tput.append(len(seeds) / (time.time() - tic_step))
+            # if step % args.log_every == 0:
+            #     acc = compute_acc(batch_pred, batch_labels)
+            #     gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
+            #     print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
+            #         epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
+            # tic_step = time.time()
 
         toc = time.time()
-        print('Epoch Time(s): {:.4f}'.format(toc - tic))
-        if epoch >= 5:
-            avg += toc - tic
-        if epoch % args.eval_every == 0 and epoch != 0:
-            eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device)
-            print('Eval Acc {:.4f}'.format(eval_acc))
-            test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device)
-            print('Test Acc: {:.4f}'.format(test_acc))
+        print('time cost:', toc - tic)
+        # if epoch >= 5:
+        #     avg += toc - tic
+        # if epoch % args.eval_every == 0 and epoch != 0:
+        #     eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device)
+        #     print('Eval Acc {:.4f}'.format(eval_acc))
+        #     test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device)
+        #     print('Test Acc: {:.4f}'.format(test_acc))
 
     print('Avg epoch time: {}'.format(avg / (epoch - 4)))
 
@@ -126,16 +131,16 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument('--dataset', type=str, default='reddit')
-    argparser.add_argument('--num-epochs', type=int, default=20)
+    argparser.add_argument('--num-epochs', type=int, default=1)
     argparser.add_argument('--num-hidden', type=int, default=16)
     argparser.add_argument('--num-layers', type=int, default=2)
-    argparser.add_argument('--fan-out', type=str, default='10,25')
+    argparser.add_argument('--fan-out', type=str, default='25,10')
     argparser.add_argument('--batch-size', type=int, default=1000)
     argparser.add_argument('--log-every', type=int, default=20)
     argparser.add_argument('--eval-every', type=int, default=5)
     argparser.add_argument('--lr', type=float, default=0.003)
     argparser.add_argument('--dropout', type=float, default=0.5)
-    argparser.add_argument('--num-workers', type=int, default=4,
+    argparser.add_argument('--num-workers', type=int, default=0,
                            help="Number of sampling processes. Use 0 for no extra process.")
     argparser.add_argument('--sample-gpu', action='store_true',
                            help="Perform the sampling process on the GPU. Must have 0 workers.")
@@ -147,7 +152,7 @@ if __name__ == '__main__':
                                 "be undesired if they cannot fit in GPU memory at once. "
                                 "This flag disables that.")
     args = argparser.parse_args()
-
+    args.gpu = 0
     if args.gpu >= 0:
         device = th.device('cuda:%d' % args.gpu)
     else:

@@ -28,7 +28,8 @@ def cleanup():
     dist.destroy_process_group()
 
 class NeighborSampler(object):
-    def __init__(self, g, num_vertices, device_min_vids, device_min_eids, global_nid_map, fanouts, sample_neighbors, load_feat=True):
+    def __init__(self, g, num_vertices, device_min_vids, device_min_eids, global_nid_map, 
+                    fanouts, sample_neighbors, device, load_feat=True):
         self.g = g
         self.num_vertices = num_vertices
         self.fanouts = fanouts
@@ -37,6 +38,7 @@ class NeighborSampler(object):
         self.device_min_vids = device_min_vids
         self.device_min_eids = device_min_eids
         self.global_nid_map = global_nid_map
+        self.device = device
 
     '''
     suppose g, seed_nodes are all on gpu
@@ -46,7 +48,7 @@ class NeighborSampler(object):
         is_local = True
         for fanout in self.fanouts:
             # print("seeds:", seeds)
-            #print(self.device_min_vids)
+            # print(self.device_min_vids)
             # For each seed node, sample ``fanout`` neighbors.
             frontier = self.sample_neighbors(self.g, self.num_vertices,
                                              self.device_min_vids, self.device_min_eids,
@@ -56,25 +58,29 @@ class NeighborSampler(object):
             block = dgl.to_block(frontier, seeds)
             # Obtain the seed nodes for next layer.
             seeds = block.srcdata[dgl.NID]
-            # print("frontiers:", seeds)
+            # seeds = th.LongTensor([141625, 141734]).to(self.device)
             blocks.insert(0, block)
-
+        # exit()
         return blocks
 
 def test_sampling(num_vertices, g, rank):
     device = th.device('cuda:%d' % rank)
     if rank == 0:
-        seeds = th.LongTensor([113213,  75897]).to(device)
+        seeds = th.LongTensor([141625, 141734]).to(device)
     else:
-        seeds = th.LongTensor([64555, 106501]).to(device)
+        seeds = th.LongTensor([1, 2]).to(device)
     g = g.to(device)
     min_vids = th.LongTensor([0, 116366]).to(device)
     min_eids = th.LongTensor([0, 116366]).to(device)
-    print(seeds)
-    frontier = ds.sample_neighbors(g, num_vertices, min_vids, min_eids, seeds, 2, g.ndata[dgl.NID], is_local=True)
-    # block = dgl.to_block(frontier, seeds)
-    # seeds = block.srcdata[dgl.NID]
-    # print(seeds)
+    #print(seeds)
+    frontier = ds.sample_neighbors(g, num_vertices, min_vids, min_eids, seeds, 2, g.ndata[dgl.NID], is_local=False)
+    # try:
+    block = dgl.to_block(frontier, seeds)
+    seeds = block.srcdata[dgl.NID]
+    # except:
+    #     print(seeds)
+    #     exit()
+    #print(seeds)
 
 
 def run(rank, args):
@@ -86,8 +92,9 @@ def run(rank, args):
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
     num_vertices = gpb._max_node_ids[-1]
-    # test_sampling(num_vertices, g, rank)
-    # exit(0)
+    #test_sampling(num_vertices, g, rank)
+    #time.sleep(2)
+    #exit(0)
 
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
@@ -102,12 +109,13 @@ def run(rank, args):
     min_vids = [0] + list(gpb._max_node_ids)
     min_eids = [0] + list(gpb._max_edge_ids)
     time.sleep(2)
+    print(min_vids)
     sampler = NeighborSampler(train_g, num_vertices,
                               F.tensor(min_vids, dtype=F.int64).to(device),
                               F.tensor(min_eids, dtype=F.int64).to(device),
                               global_nid_map,
                               [int(fanout) for fanout in args.fan_out.split(',')],
-                              dgl.ds.sample_neighbors)
+                              dgl.ds.sample_neighbors, device)
 
     dataloader = dgl.dataloading.NodeDataLoader(
         train_g,
@@ -121,9 +129,13 @@ def run(rank, args):
 
     cnt = 0
     for epoch in range(args.num_epochs):
+        tic = time.time()
         for step, blocks in enumerate(dataloader):
             print("batch:", cnt)
             cnt += 1
+        toc = time.time()
+        print("sampling finish!!!!", rank)
+        print("time cost:", toc - tic)
 
     cleanup()
   
@@ -135,7 +147,7 @@ if __name__ == '__main__':
     parser.add_argument('--graph_name', default='test', type=str, help='graph name')
     parser.add_argument('--part_config', default='./data/reddit.json', type=str, help='The path to the partition config file')
     parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
-    parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
+    parser.add_argument('--batch_size', default=1000, type=int, help='Batch size')
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=1, type=int, help='Epochs')
     args = parser.parse_args()
