@@ -41,7 +41,9 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLNCCLInit")
     ncclUniqueId nccl_id;
     memcpy(nccl_id.internal, id_str.c_str(), NCCL_UNIQUE_ID_BYTES);
     cudaSetDevice(rank);
-    ncclCommInitRank(&context->nccl_comm, world_size, nccl_id, rank);
+    if(world_size > 1) {
+      ncclCommInitRank(&context->nccl_comm, world_size, nccl_id, rank);
+    }
     LOG(INFO) << "Rank " + std::to_string(rank) + " successfully build nccl communicator";
   });
 

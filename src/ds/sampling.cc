@@ -12,6 +12,7 @@
 #include "context.h"
 #include "cuda/ds_kernel.h"
 #include "cuda/cuda_utils.h"
+#include "./memory_manager.h"
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
@@ -112,6 +113,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   // ConvertGidToLid(seeds, min_vids, rank);
   HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, reshuffled_neighbors);
 
+  MemoryManager::Global()->ClearUseCount();
   *rv = HeteroGraphRef(subg);
 });
 
