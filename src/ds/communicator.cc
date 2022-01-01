@@ -15,37 +15,40 @@ using namespace dgl::runtime;
 namespace dgl {
 namespace ds {
 
-DGL_REGISTER_GLOBAL("ds._CAPI_DGLNCCLGetUniqueId")
-.set_body([] (DGLArgs args, DGLRetValue *rv) {
-    int rank = args[0];
-    ncclUniqueId id;
-    if(rank == 0) {
-      ncclGetUniqueId(&id);
-    } 
-    auto id_array = DGLByteArray();
-    id_array.data = id.internal;
-    id_array.size = NCCL_UNIQUE_ID_BYTES;
-    *rv = id_array;
-  });
-DGL_REGISTER_GLOBAL("ds._CAPI_DGLNCCLInit")
-.set_body([] (DGLArgs args, DGLRetValue *rv) {
-    std::string id_str = args[0];
-    int rank = args[1];
-    int world_size = args[2];
-    auto* context = DSContext::Global();
+std::string NCCLIdToString(ncclUniqueId id) {
+  return std::string(id.internal, id.internal + NCCL_UNIQUE_ID_BYTES);
+}
 
-    context->initialized = true;
-    context->world_size = world_size;
-    context->rank = rank;
+ncclUniqueId StringToNCCLId(const std::string& str) {
+  ncclUniqueId ret;
+  CHECK_EQ(str.length(), NCCL_UNIQUE_ID_BYTES);
+  memcpy(ret.internal, str.data(), NCCL_UNIQUE_ID_BYTES);
+  return ret;
+}
 
-    ncclUniqueId nccl_id;
-    memcpy(nccl_id.internal, id_str.c_str(), NCCL_UNIQUE_ID_BYTES);
-    cudaSetDevice(rank);
-    if(world_size > 1) {
-      ncclCommInitRank(&context->nccl_comm, world_size, nccl_id, rank);
-    }
-    LOG(INFO) << "Rank " + std::to_string(rank) + " successfully build nccl communicator";
-  });
+DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")
+.set_body([] (DGLArgs args, DGLRetValue *rv) {
+  int rank = args[0];
+  int world_size = args[1];
+  auto* ds_context = DSContext::Global();
+  ds_context->initialized = true;
+  ds_context->rank = rank;
+  ds_context->world_size = ds_context->world_size;
+  ds_context->coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size));
+
+  ncclUniqueId nccl_id;
+  if (rank == 0) {
+    ncclGetUniqueId(&nccl_id);
+  }
+  std::string nccl_id_str = NCCLIdToString(nccl_id);
+  ds_context->coordinator->Broadcast(nccl_id_str);
+  nccl_id = StringToNCCLId(nccl_id_str);
+
+  if(world_size > 1) {
+    ncclCommInitRank(&ds_context->nccl_comm, world_size, nccl_id, rank);
+  }
+  LOG(INFO) << "Rank " + std::to_string(rank) + " successfully builds nccl communicator";
+});
 
 }
 }

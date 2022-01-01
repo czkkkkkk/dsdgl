@@ -153,6 +153,7 @@ file(GLOB DGL_SRC
   src/dataloading/*.cc
   src/partition/*.cc
   src/ds/*.cc
+  src/ds/base/*.cc
 )
 
 file(GLOB_RECURSE DGL_SRC_1
@@ -203,6 +204,20 @@ target_include_directories(dgl PRIVATE "third_party/METIS/include/")
 target_include_directories(dgl PRIVATE "tensoradapter/include")
 target_include_directories(dgl PRIVATE "third_party/nanoflann/include")
 target_include_directories(dgl PRIVATE "third_party/libxsmm/include")
+
+# ZMQ
+find_path(ZMQ_INCLUDE_DIR NAMES zmq.hpp)
+find_library(ZMQ_LIBRARY NAMES zmq)
+
+if(ZMQ_INCLUDE_DIR AND ZMQ_LIBRARY)
+  message(STATUS "Found ZeroMQ:")
+  message(STATUS "  (Headers) ${ZMQ_INCLUDE_DIR}")
+  message(STATUS "  (Library) ${ZMQ_LIBRARY}")
+else()
+  message(FATAL_ERROR "ZeorMQ not found")
+endif()
+target_include_directories(dgl PRIVATE ${ZMQ_INCLUDE_DIR})
+list(APPEND DGL_LINKER_LIBS ${ZMQ_LIBRARY})
 
 # For serialization
 if (USE_HDFS)

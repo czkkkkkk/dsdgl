@@ -6,6 +6,8 @@
 #include <dgl/runtime/registry.h>
 #include <memory>
 
+#include "coordinator.h"
+
 using namespace dgl::runtime;
 
 namespace dgl {
@@ -16,6 +18,7 @@ struct DSContext {
   int world_size;
   int rank;
   ncclComm_t nccl_comm;
+  std::unique_ptr<Coordinator> coordinator;
 
   static DSContext* Global() {
     static DSContext instance;
