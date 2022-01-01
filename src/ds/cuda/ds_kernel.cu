@@ -10,6 +10,8 @@
 
 #include <dgl/array.h>
 
+#include "../memory_manager.h"
+
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
   if( e != cudaSuccess ) {                          \
@@ -107,8 +109,10 @@ void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_size
   thrust::device_ptr<IdType> seeds_ptr(seeds.Ptr<IdType>());
   thrust::sort(seeds_ptr, seeds_ptr + n_seeds);
   auto dgl_ctx = seeds->ctx;
-  *send_sizes = Full<int64_t>(0, world_size, dgl_ctx);
-  *send_offset = Full<int64_t>(0, world_size + 1, dgl_ctx);
+  // *send_sizes = Full<int64_t>(0, world_size, dgl_ctx);
+  // *send_offset = Full<int64_t>(0, world_size + 1, dgl_ctx);
+  *send_sizes = MemoryManager::Global()->Full<int64_t>("SEND_SIZES", 0, world_size, dgl_ctx);
+  *send_offset = MemoryManager::Global()->Full<int64_t>("SEND_OFFSET", 0, world_size + 1, dgl_ctx);
 
   _CountDeviceVerticesKernel<<<BLOCK_NUM, BLOCK_SIZE>>>(world_size, min_vids.Ptr<IdType>(),
                                                         n_seeds, seeds.Ptr<IdType>(),
@@ -140,12 +144,14 @@ void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdA
 void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int rank, int world_size, ncclComm_t nccl_comm, IdArray* frontier, IdArray* host_recv_offset) {
   auto dgl_context = seeds->ctx;
   auto host_dgl_context = DLContext{kDLCPU, 0};
-  IdArray recv_sizes = IdArray::Empty({world_size}, seeds->dtype, dgl_context);
+  // IdArray recv_sizes = IdArray::Empty({world_size}, seeds->dtype, dgl_context);
+  IdArray recv_sizes = MemoryManager::Global()->Empty("RECV_SIZES", {world_size}, seeds->dtype, dgl_context);
   IdArray range_seq = Range(0, world_size + 1, 64, host_dgl_context);
   AllToAll(send_sizes, range_seq, recv_sizes, range_seq, 1, rank, world_size, nccl_comm);
 
   IdArray host_recv_sizes = recv_sizes.CopyTo(host_dgl_context);
-  *host_recv_offset = Full<int64_t>(0, world_size + 1, host_dgl_context);
+  // *host_recv_offset = Full<int64_t>(0, world_size + 1, host_dgl_context);
+  *host_recv_offset = MemoryManager::Global()->Full<int64_t>("HOST_RECV_OFFSET", 0, world_size + 1, host_dgl_context);
   auto* host_recv_offset_ptr = host_recv_offset->Ptr<IdType>();
   auto* host_recv_sizes_ptr = host_recv_sizes.Ptr<IdType>();
   host_recv_offset_ptr[0] = 0;
@@ -153,7 +159,8 @@ void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int ra
     host_recv_offset_ptr[i] = host_recv_offset_ptr[i-1] + host_recv_sizes_ptr[i-1];
   }
   int n_frontier = host_recv_offset_ptr[world_size];
-  *frontier = IdArray::Empty({n_frontier}, seeds->dtype, dgl_context);
+  // *frontier = IdArray::Empty({n_frontier}, seeds->dtype, dgl_context);
+  *frontier = MemoryManager::Global()->Empty("FRONTIER", {n_frontier}, seeds->dtype, dgl_context);
   AllToAll(seeds, host_send_offset, *frontier, *host_recv_offset, 1, rank, world_size, nccl_comm);
 }
 
@@ -204,11 +211,14 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
 void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges) {
   auto dgl_ctx = frontier->ctx;
   int n_frontier = frontier->shape[0];
-  IdArray edge_offset = Full<int64_t>(fanout, n_frontier + 1, dgl_ctx);
+  // IdArray edge_offset = Full<int64_t>(fanout, n_frontier + 1, dgl_ctx);
+  IdArray edge_offset = MemoryManager::Global()->Full<int64_t>("EDGE_OFFSET", fanout, n_frontier + 1, dgl_ctx);
   auto edge_offset_ptr = thrust::device_ptr<IdType>(edge_offset.Ptr<IdType>());
   thrust::exclusive_scan(edge_offset_ptr, edge_offset_ptr + n_frontier + 1, edge_offset_ptr);
-  *neighbors = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
-  *edges = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
+  //*neighbors = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
+  //*edges = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
+  *neighbors = MemoryManager::Global()->Empty("NEIGHBORS", {n_frontier * fanout}, frontier->dtype, dgl_ctx);
+  *edges = MemoryManager::Global()->Empty("EDGES", {n_frontier * fanout}, frontier->dtype, dgl_ctx);
 
   constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
   const dim3 block(WARP_SIZE, BLOCK_ROWS);
@@ -222,7 +232,8 @@ void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* n
 
 void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_send_offset, IdArray host_shuffle_recv_offset, int rank, int world_size, ncclComm_t nccl_comm, IdArray* reshuffled_neighbors) {
   int shuffle_send_size = host_shuffle_send_offset.Ptr<IdType>()[world_size];
-  *reshuffled_neighbors = IdArray::Empty({shuffle_send_size * fanout}, neighbors->dtype, neighbors->ctx);
+  // *reshuffled_neighbors = IdArray::Empty({shuffle_send_size * fanout}, neighbors->dtype, neighbors->ctx);
+  *reshuffled_neighbors = MemoryManager::Global()->Empty("RESHUFFLED_NEIGHBORS", {shuffle_send_size * fanout}, neighbors->dtype, neighbors->ctx);
   AllToAll(neighbors, host_shuffle_recv_offset, *reshuffled_neighbors, host_shuffle_send_offset, fanout, rank, world_size, nccl_comm);
 }
 
@@ -246,7 +257,8 @@ void Replicate(IdArray src, IdArray *dst, int fanout) {
   auto *src_ptr = src.Ptr<IdType>();
   auto dgl_ctx = src->ctx;
   int n_seeds = src->shape[0];
-  *dst = IdArray::Empty({n_seeds * fanout}, src->dtype, dgl_ctx);
+  // *dst = IdArray::Empty({n_seeds * fanout}, src->dtype, dgl_ctx);
+  *dst = MemoryManager::Global()->Empty("DESTINATION", {n_seeds * fanout}, src->dtype, dgl_ctx);
   auto *dst_ptr = (*dst).Ptr<IdType>();
 
   constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
