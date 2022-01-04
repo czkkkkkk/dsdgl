@@ -11,6 +11,8 @@
 #include <dgl/array.h>
 
 #include "../memory_manager.h"
+#include "./alltoall.h"
+#include "../context.h"
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
@@ -35,6 +37,8 @@ using namespace dgl::aten;
 
 namespace dgl {
 namespace ds {
+
+static constexpr int MAX_RECV_BUFFER_SIZE = 8 * 1000 * 250 * 10;
 
 __global__
 void _GidToLidKernel(IdType* global_ids, size_t size, IdType* min_vids, int rank) {
@@ -141,6 +145,20 @@ void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdA
   ncclGroupEnd();
 }
 
+void AllToAllV2(IdArray send_buffer, IdArray send_offset, IdArray* recv_buffer, IdArray* host_recv_offset, int rank, int world_size, const std::string& scope) {
+  auto* ds_context = DSContext::Global();
+  auto dgl_context = send_buffer->ctx;
+  *recv_buffer = MemoryManager::Global()->Empty(scope + "_RECV_BUFFER", {MAX_RECV_BUFFER_SIZE}, send_buffer->dtype, dgl_context);
+  IdArray recv_offset = MemoryManager::Global()->Empty(scope + "_RECV_OFFSET", {world_size + 1}, send_buffer->dtype, dgl_context);
+
+  Alltoall(send_buffer.Ptr<IdType>(), send_offset.Ptr<IdType>(), recv_buffer->Ptr<IdType>(), recv_offset.Ptr<IdType>(), &ds_context->comm_info, rank, world_size);
+
+  *host_recv_offset = recv_offset.CopyTo({kDLCPU, 0});
+  IdType* host_recv_offset_ptr = host_recv_offset->Ptr<IdType>();
+  CHECK_LE(host_recv_offset_ptr[world_size], MAX_RECV_BUFFER_SIZE);
+  *recv_buffer = recv_buffer->CreateView({(signed long) host_recv_offset_ptr[world_size]}, send_buffer->dtype);
+}
+
 void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int rank, int world_size, ncclComm_t nccl_comm, IdArray* frontier, IdArray* host_recv_offset) {
   auto dgl_context = seeds->ctx;
   auto host_dgl_context = DLContext{kDLCPU, 0};
@@ -163,6 +181,11 @@ void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int ra
   *frontier = MemoryManager::Global()->Empty("FRONTIER", {n_frontier}, seeds->dtype, dgl_context);
   AllToAll(seeds, host_send_offset, *frontier, *host_recv_offset, 1, rank, world_size, nccl_comm);
 }
+
+void ShuffleV2(IdArray seeds, IdArray send_offset, int rank, int world_size, IdArray* frontier, IdArray* host_recv_offset) {
+  AllToAllV2(seeds, send_offset, frontier, host_recv_offset, rank, world_size, "SHUFFLEV2");
+}
+
 
 template <int BLOCK_ROWS>
 __global__ void _CSRRowWiseSampleReplaceKernel(
@@ -235,6 +258,17 @@ void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_
   // *reshuffled_neighbors = IdArray::Empty({shuffle_send_size * fanout}, neighbors->dtype, neighbors->ctx);
   *reshuffled_neighbors = MemoryManager::Global()->Empty("RESHUFFLED_NEIGHBORS", {shuffle_send_size * fanout}, neighbors->dtype, neighbors->ctx);
   AllToAll(neighbors, host_shuffle_recv_offset, *reshuffled_neighbors, host_shuffle_send_offset, fanout, rank, world_size, nccl_comm);
+}
+
+void ReshuffleV2(IdArray neighbors, int fanout, IdArray host_shuffle_recv_offset, int rank, int world_size, IdArray* reshuffled_neighbors) {
+  auto dgl_context = neighbors->ctx;
+  auto* host_shuffle_recv_offset_ptr = host_shuffle_recv_offset.Ptr<IdType>();
+  for(int i = 0; i <= world_size; ++i) {
+    host_shuffle_recv_offset_ptr[i] *= fanout;
+  }
+  auto shuffle_recv_offset = host_shuffle_recv_offset.CopyTo(dgl_context);
+  IdArray recv_offset;
+  AllToAllV2(neighbors, shuffle_recv_offset, reshuffled_neighbors, &recv_offset, rank, world_size, "RESHUFFLEV2");
 }
 
 template <int BLOCK_ROWS>

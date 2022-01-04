@@ -154,6 +154,8 @@ file(GLOB DGL_SRC
   src/partition/*.cc
   src/ds/*.cc
   src/ds/base/*.cc
+  src/ds/comm/*.cc
+  src/ds/conn/*.cc
 )
 
 file(GLOB_RECURSE DGL_SRC_1
@@ -218,6 +220,9 @@ else()
 endif()
 target_include_directories(dgl PRIVATE ${ZMQ_INCLUDE_DIR})
 list(APPEND DGL_LINKER_LIBS ${ZMQ_LIBRARY})
+
+# NVML
+list(APPEND DGL_LINKER_LIBS /usr/local/cuda/lib64/stubs/libnvidia-ml.so)
 
 # For serialization
 if (USE_HDFS)
@@ -311,6 +316,7 @@ install(TARGETS dgl DESTINATION lib${LIB_SUFFIX})
 
 # Testing
 if(BUILD_CPP_TEST)
+  find_package(MPI REQUIRED)
   message(STATUS "Build with unittest")
   add_subdirectory(./third_party/googletest)
   enable_testing()
@@ -322,9 +328,10 @@ if(BUILD_CPP_TEST)
   include_directories("third_party/dmlc-core/include")
   include_directories("third_party/phmap")
   include_directories("third_party/libxsmm/include")
+  include_directories(${MPI_INCLUDE_PATH})
   file(GLOB_RECURSE TEST_SRC_FILES ${PROJECT_SOURCE_DIR}/tests/cpp/ds/*.cc)
   add_executable(runUnitTests ${TEST_SRC_FILES})
-  target_link_libraries(runUnitTests gtest gtest_main)
+  target_link_libraries(runUnitTests gtest ${MPI_C_LIBRARIES})
   target_link_libraries(runUnitTests dgl)
   add_test(UnitTests runUnitTests)
 endif(BUILD_CPP_TEST)

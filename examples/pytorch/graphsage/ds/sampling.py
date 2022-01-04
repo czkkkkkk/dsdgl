@@ -123,20 +123,30 @@ def run(rank, args):
         drop_last=False,
         num_workers=0)
 
-    cnt = 0
     th.distributed.barrier()
+    stop_epoch = -1
+    if args.n_ranks == 2:
+        stop_epoch = 74
+    elif args.n_ranks == 4:
+        stop_epoch = 33
+    elif args.n_ranks == 8:
+        stop_epoch = 17
     total = 0
+    skip_epoch = 5
     for epoch in range(args.num_epochs):
         tic = time.time()
-        for step, blocks in enumerate(dataloader):
-            #print("batch:", cnt)
-            cnt += 1
-            if cnt == 17:
-                break
         cnt = 0
+        for step, blocks in enumerate(dataloader):
+            # print("batch:", cnt)
+            cnt += 1
+            if cnt == stop_epoch:
+                break
         toc = time.time()
-        total += (toc - tic)
-    print("rank:", rank, "sampling time:", total/args.num_epochs)
+        if epoch >= skip_epoch:
+            total += (toc - tic)
+
+        print("rank:", rank, toc - tic)
+    print("rank:", rank, "sampling time:", total/(args.num_epochs - skip_epoch))
     cleanup()
   
 

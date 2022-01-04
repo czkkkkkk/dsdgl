@@ -99,7 +99,12 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}));
 
   IdArray frontier, host_recv_offset;
-  Shuffle(seeds, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset);
+  int use_nccl = GetEnvParam("USE_NCCL", 0);
+  if(use_nccl) {
+    Shuffle(seeds, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset);
+  } else {
+    ShuffleV2(seeds, send_offset, rank, world_size, &frontier, &host_recv_offset);
+  }
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray neighbors, edges;
@@ -108,7 +113,12 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   ConvertLidToGid(neighbors, global_nid_map);
   
   IdArray reshuffled_neighbors;
-  Reshuffle(neighbors, fanout, n_seeds, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &reshuffled_neighbors);
+  if(use_nccl) {
+    Reshuffle(neighbors, fanout, n_seeds, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &reshuffled_neighbors);
+  } else {
+    ReshuffleV2(neighbors, fanout, host_recv_offset, rank, world_size, &reshuffled_neighbors);
+  }
+
   // LOG(INFO) << "Reshuffled neibhgors: " << ToDebugString(reshuffled_neighbors);
   
   // ConvertGidToLid(seeds, min_vids, rank);

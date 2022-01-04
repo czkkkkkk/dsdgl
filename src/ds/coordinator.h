@@ -19,6 +19,10 @@ struct ProcInfo {
   int dev_id;
   int rank;
   std::string hostname;
+
+  bool SameDevice(const ProcInfo& rhs) {
+    return hostname == rhs.hostname && dev_id == rhs.dev_id;
+  }
   BinStream &serialize(BinStream &bs) const {
     bs << pid << dev_id << rank << hostname;
     return bs;
@@ -33,7 +37,7 @@ class Coordinator {
  public:
   Coordinator(int rank, int workd_size);
 
-  int GetNPeers() const { return n_peers_; }
+  int GetWorldSize() const { return n_peers_; }
   int GetRank() const { return rank_; }
   int GetDevId() const { return peer_infos_[rank_].dev_id; }
   bool IsRoot() const { return is_root_; }

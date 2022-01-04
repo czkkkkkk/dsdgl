@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "coordinator.h"
+#include "./comm/comm_info.h"
 
 using namespace dgl::runtime;
 
@@ -19,6 +20,7 @@ struct DSContext {
   int rank;
   ncclComm_t nccl_comm;
   std::unique_ptr<Coordinator> coordinator;
+  CommInfo comm_info;
 
   static DSContext* Global() {
     static DSContext instance;
