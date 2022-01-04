@@ -31,9 +31,9 @@ void Coordinator::_Initialize() {
 
 
   // 2. Root setup the socket receving msg from all ranks
-  auto root_bind_addr = std::string("tcp://*:") + std::to_string(12306);
   // NOTE: currently assume all ranks are on the same machine
   int master_port = GetEnvParam("MASTER_PORT", 12306);
+  auto root_bind_addr = std::string("tcp://*:") + std::to_string(master_port);
   auto root_conn_addr = std::string("tcp://") + GetHostName() + ":" + std::to_string(master_port);
   if (is_root_) {
     root_receiver_ = std::unique_ptr<zmq::socket_t>(new zmq::socket_t(*zmq_ctx_, ZMQ_PULL));
