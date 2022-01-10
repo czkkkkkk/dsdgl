@@ -47,20 +47,17 @@ class NeighborSampler(object):
         blocks = []
         is_local = True
         for fanout in self.fanouts:
-            # print("seeds:", seeds)
-            # print(self.device_min_vids)
             # For each seed node, sample ``fanout`` neighbors.
             frontier = self.sample_neighbors(self.g, self.num_vertices,
                                              self.device_min_vids, self.device_min_eids,
                                              seeds, fanout, self.global_nid_map, is_local = is_local)
             is_local = False
             # Then we compact the frontier into a bipartite graph for message passing.
-            block = dgl.to_block(frontier, seeds)
+            # block = dgl.to_block(frontier, seeds)
+            block = ds.to_block(frontier, seeds)
             # Obtain the seed nodes for next layer.
             seeds = block.srcdata[dgl.NID]
-            # seeds = th.LongTensor([141625, 141734]).to(self.device)
             blocks.insert(0, block)
-        # exit()
         return blocks
 
 def test_sampling(num_vertices, g, rank):
@@ -109,7 +106,6 @@ def run(rank, args):
     min_vids = [0] + list(gpb._max_node_ids)
     min_eids = [0] + list(gpb._max_edge_ids)
     time.sleep(2)
-    print(min_vids)
     sampler = NeighborSampler(train_g, num_vertices,
                               F.tensor(min_vids, dtype=F.int64).to(device),
                               F.tensor(min_eids, dtype=F.int64).to(device),
@@ -140,8 +136,7 @@ def run(rank, args):
         cnt = 0
         toc = time.time()
         total += (toc - tic)
-        print("rank:", rank, toc - tic)
-    print("rank:", rank, "sampling time:", total/epoch)
+    print("rank:", rank, "sampling time:", total/args.num_epochs)
     cleanup()
   
 
