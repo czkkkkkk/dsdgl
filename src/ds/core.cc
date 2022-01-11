@@ -49,23 +49,27 @@ void Initialize(int rank, int world_size) {
   ds_context->world_size = world_size;
   ds_context->coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size));
 
-  wrapNvmlInit();
+  int use_nccl = GetEnvParam("USE_NCCL", 0);
+  if(!use_nccl) {
+    wrapNvmlInit();
 
-  // Build our communication environment
-  SetupGpuCommunicationEnv();
-  // Build NCCL environment
-  ncclUniqueId nccl_id;
-  if (rank == 0) {
-    ncclGetUniqueId(&nccl_id);
-  }
-  std::string nccl_id_str = NCCLIdToString(nccl_id);
-  ds_context->coordinator->Broadcast(nccl_id_str);
-  nccl_id = StringToNCCLId(nccl_id_str);
+    // Build our communication environment
+    SetupGpuCommunicationEnv();
+  } else {
+    // Build NCCL environment
+    ncclUniqueId nccl_id;
+    if (rank == 0) {
+      ncclGetUniqueId(&nccl_id);
+    }
+    std::string nccl_id_str = NCCLIdToString(nccl_id);
+    ds_context->coordinator->Broadcast(nccl_id_str);
+    nccl_id = StringToNCCLId(nccl_id_str);
 
-  if(world_size > 1) {
-    ncclCommInitRank(&ds_context->nccl_comm, world_size, nccl_id, rank);
+    if(world_size > 1) {
+      ncclCommInitRank(&ds_context->nccl_comm, world_size, nccl_id, rank);
+    }
+    LOG(INFO) << "Rank " + std::to_string(rank) + " successfully builds nccl communicator";
   }
-  LOG(INFO) << "Rank " + std::to_string(rank) + " successfully builds nccl communicator";
 }
 
 DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")

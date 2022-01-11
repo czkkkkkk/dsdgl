@@ -64,8 +64,8 @@ void Coordinator::_Initialize() {
       std::string peer_hostname = zmq_recv_string(root_receiver_.get());
       int pid = zmq_recv_int32(root_receiver_.get());
       std::string peer_addr = zmq_recv_string(root_receiver_.get());
-      LOG(INFO) << "Get the info of peer " << peer_rank << " on address "
-                << peer_addr;
+      LOG(INFO) << "Get the info of peer " + std::to_string(peer_rank) + " on address "
+                + peer_addr;
       CHECK_LT(peer_rank, n_peers_);
 
       to_peers_[peer_rank] = std::unique_ptr<zmq::socket_t>(new zmq::socket_t(*zmq_ctx_, ZMQ_PUSH));
@@ -82,7 +82,7 @@ void Coordinator::_Initialize() {
     }
   }
   Broadcast(peer_infos_);
-  LOG(INFO) << "My rank is " << rank_ << ", my device id is " << peer_infos_[rank_].dev_id;
+  LOG(INFO) << "My rank is " + std::to_string(rank_) + ", my device id is " + std::to_string(peer_infos_[rank_].dev_id);
 }
 
 void Coordinator::SendIntTo(int peer_id, int val) {
