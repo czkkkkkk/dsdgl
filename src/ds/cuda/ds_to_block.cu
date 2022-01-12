@@ -6,13 +6,13 @@
 #include <memory>
 
 #include "../../runtime/cuda/cuda_common.h"
-#include "../../runtime/cuda/cuda_hashtable.cuh"
+#include "ds_cuda_hashtable.cuh"
 #include "../../graph/heterograph.h"
 
 #include "../memory_manager.h"
 
 using namespace dgl::aten;
-using namespace dgl::runtime::cuda;
+using namespace dgl::ds::cuda;
 
 namespace dgl {
 
@@ -520,6 +520,8 @@ ToBlock(HeteroGraphPtr graph,
   MemoryManager::Global()->Empty("NEW_RHS", {(1024*25+1024)*10}, dtype, ctx);
   MemoryManager::Global()->Empty("SRC_NODES", {(1024*25+1024)*10}, dtype, ctx);
   MemoryManager::Global()->Empty("LHS_NODES", {(1024*25+1024)*10}, dtype, ctx);
+  MemoryManager::Global()->Empty("ITEM_PREFIX", {(1024*25+1024)*10}, dtype, ctx);
+  MemoryManager::Global()->Empty("WORKSPACE", {1024}, dtype, ctx);
   MemoryManager::Global()->ClearUseCount();
 
   return ToBlockGPU<int64_t>(graph, rhs_nodes, include_rhs_in_lhs);

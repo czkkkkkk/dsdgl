@@ -21,6 +21,7 @@ class MemoryManager {
     DLDataType dtype;
     DLContext ctx;
   };
+
   NDArray Empty(const std::string& name, const std::vector<int64_t>& shape, DLDataType dtype, DLContext ctx) {
     return _GetArray(name, shape, dtype, ctx, [&shape, dtype, ctx]() {
       return NDArray::Empty(shape, dtype, ctx);
