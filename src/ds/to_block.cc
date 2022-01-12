@@ -8,7 +8,7 @@
 #include <vector>
 #include <tuple>
 
-#include "cuda/to_block.h"
+#include "cuda/ds_to_block.h"
 
 namespace dgl {
 
