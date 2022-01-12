@@ -23,10 +23,11 @@
   }                                                 \
 } while(0)
 
+namespace dgl {
+
 using namespace dgl::runtime;
 using namespace dgl::aten;
 
-namespace dgl {
 namespace ds {
 
 void Sample(IdArray frontier, const HeteroGraphPtr hg, int fanout, bool replace, IdArray* neighbors, IdArray* edges) {

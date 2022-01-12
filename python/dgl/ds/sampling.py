@@ -55,6 +55,9 @@ def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, f
                                          fanout, edge_dir, prob_arrays, replace, global_nid_map, is_local)
 
     src, dst, eid = subgidx.edges(0)
+    # print("src:", src.size())
+    # print("dst:", dst.size())
+    # print("eid:", eid.size())
     ret = graph((dst, src), num_nodes = num_vertices)
     # print("finish convert graph")
     # todo zqh handle features
