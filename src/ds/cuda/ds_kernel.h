@@ -33,9 +33,13 @@ void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_size
 
 void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int rank, int world_size, ncclComm_t nccl_comm, IdArray* frontier, IdArray* host_recv_offset);
 
+void ShuffleV2(IdArray seeds, IdArray send_offset, int rank, int world_size, IdArray* frontier, IdArray* host_recv_offset);
+
 void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges);
 
 void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_send_offset, IdArray host_shuffle_recv_offset, int rank, int world_size, ncclComm_t nccl_comm, IdArray* reshuffled_neighbors);
+
+void ReshuffleV2(IdArray neighbors, int fanout, IdArray host_shuffle_recv_offset, int rank, int world_size, IdArray* reshuffled_neighbors);
 
 void Replicate(IdArray src, IdArray *des, int fanout);
 
