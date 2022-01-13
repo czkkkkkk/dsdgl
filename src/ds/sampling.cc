@@ -92,6 +92,8 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   if (is_local) {
     ConvertLidToGid(seeds, global_nid_map);
   }
+  IdArray idx;
+  std::tie(seeds, idx) = Sort(seeds);
 
   IdArray send_sizes, send_offset;
   Cluster(seeds, min_vids, world_size, &send_sizes, &send_offset);

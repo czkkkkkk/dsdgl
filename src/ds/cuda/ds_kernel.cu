@@ -79,8 +79,8 @@ void _CountDeviceVerticesKernel(int device_cnt,
                                 uint64 *device_col_cnt) {
   __shared__ uint64 local_count[9];
   __shared__ uint64 device_vid[9];
-  assert(blockDim.x == BLOCK_SIZE);
   uint64 idx = blockDim.x * blockIdx.x + threadIdx.x;
+  int stride = gridDim.x * blockDim.x;
 
   if (threadIdx.x <= device_cnt) {
     device_vid[threadIdx.x] = device_vid_base[threadIdx.x];
@@ -97,7 +97,7 @@ void _CountDeviceVerticesKernel(int device_cnt,
       ++device_id;
     }
     atomicAdd(&local_count[device_id], 1);
-    idx += BLOCK_NUM * BLOCK_SIZE;
+    idx += stride;
   }
 
   __syncthreads();
@@ -110,15 +110,17 @@ void _CountDeviceVerticesKernel(int device_cnt,
 
 void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_sizes, IdArray* send_offset) {
   int n_seeds = seeds->shape[0];
-  thrust::device_ptr<IdType> seeds_ptr(seeds.Ptr<IdType>());
-  thrust::sort(seeds_ptr, seeds_ptr + n_seeds);
+  // thrust::device_ptr<IdType> seeds_ptr(seeds.Ptr<IdType>());
+  // thrust::sort(seeds_ptr, seeds_ptr + n_seeds);
   auto dgl_ctx = seeds->ctx;
   // *send_sizes = Full<int64_t>(0, world_size, dgl_ctx);
   // *send_offset = Full<int64_t>(0, world_size + 1, dgl_ctx);
   *send_sizes = MemoryManager::Global()->Full<int64_t>("SEND_SIZES", 0, world_size, dgl_ctx);
   *send_offset = MemoryManager::Global()->Full<int64_t>("SEND_OFFSET", 0, world_size + 1, dgl_ctx);
 
-  _CountDeviceVerticesKernel<<<BLOCK_NUM, BLOCK_SIZE>>>(world_size, min_vids.Ptr<IdType>(),
+  int n_threads = 1024;
+  int n_blocks = (n_seeds + n_threads - 1) / n_threads;
+  _CountDeviceVerticesKernel<<<n_blocks, n_threads>>>(world_size, min_vids.Ptr<IdType>(),
                                                         n_seeds, seeds.Ptr<IdType>(),
                                                         send_sizes->Ptr<IdType>());
   thrust::exclusive_scan(thrust::device_ptr<IdType>(send_sizes->Ptr<IdType>()), 
