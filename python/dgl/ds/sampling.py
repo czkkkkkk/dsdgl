@@ -8,6 +8,7 @@ from ..convert import graph
 
 __all__ = [
     'sample_neighbors',
+    'rebalance_train_nids'
     ]
 
 # def sample_neighbors(g, gpb, seeds, fanout, context):
@@ -67,6 +68,13 @@ def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, f
     # if copy_edata:
     #     edge_frames = utils.extract_edge_subframes(g, induced_edges)
     #     utils.set_new_frames(ret, edge_frames=edge_frames)
+    return ret
+
+def rebalance_train_nids(train_nids, batch_size, global_nid_map):
+    train_nids = F.to_dgl_nd(train_nids)
+    global_nid_map = F.to_dgl_nd(global_nid_map)
+    ret = _CAPI_DGLDSRebalanceNIds(train_nids, batch_size, global_nid_map)
+    ret = F.from_dgl_nd(ret)
     return ret
 
 _init_api("dgl.ds.sampling")

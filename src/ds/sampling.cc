@@ -130,5 +130,78 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   *rv = HeteroGraphRef(subg);
 });
 
+IdArray ToGlobal(IdArray nids, IdArray global_nid_map) {
+  CHECK(nids->ctx.device_type == kDLCPU);
+  CHECK(global_nid_map->ctx.device_type == kDLCPU);
+  int length = nids->shape[0];
+  IdArray ret = IdArray::Empty({length}, nids->dtype, nids->ctx);
+  IdType* ret_ptr = ret.Ptr<IdType>();
+  IdType* nids_ptr = nids.Ptr<IdType>();
+  IdType* global_nid_map_ptr = global_nid_map.Ptr<IdType>();
+  for(int i = 0; i < length; ++i) {
+    ret_ptr[i] = global_nid_map_ptr[nids_ptr[i]];
+  }
+  return ret;
+}
+
+IdArray Rebalance(IdArray ids, int batch_size, Coordinator* coor) {
+  auto ids_vec = ids.ToVector<int64_t>();
+  auto vecs = coor->Gather(ids_vec);
+  if(coor->IsRoot()) {
+    int total = 0;
+    for (const auto& vec: vecs) {
+      total += vec.size();
+    }
+    int world_size = coor->GetWorldSize();
+    int batch_per_rank = total / (world_size * batch_size);
+    int size_per_rank = batch_per_rank * batch_size;
+    for(auto& vec: vecs) {
+      if(vec.size() > size_per_rank) {
+        auto redundant = std::vector<int64_t>(vec.begin() + size_per_rank, vec.end());
+        vec.resize(size_per_rank);
+        int cur_rank = 0;
+        for(int i = 0; i < redundant.size(); ++i) {
+          int loop_size = 0;
+          while(loop_size < world_size) {
+            if(vecs[cur_rank].size() < size_per_rank) {
+              vecs[cur_rank].push_back(redundant[i]);
+              break;
+            }
+            cur_rank = (cur_rank + 1) % world_size;
+            loop_size++;
+          }
+          if(loop_size == world_size) {
+            break;
+          }
+        }
+      }
+    }
+  }
+  auto ret = coor->Scatter(vecs);
+  return NDArray::FromVector(ret);
+}
+
+/**
+ * @brief Rebalance local node ids of all ranks so that each rank have
+ * the same number of node ids. It may drop some node ids to keep balance.
+ * Note that the output are global node ids.
+ * 
+ * @param nids local node ids
+ * @param batch_size pack as much ids as possible according to the batch_size
+ * @param global_nid_map
+ * 
+ * @return balanced global node ids
+ */
+DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSRebalanceNIds")
+.set_body([] (DGLArgs args, DGLRetValue *rv) {
+  IdArray nids = args[0];
+  int batch_size = args[1];
+  IdArray global_nid_map = args[2];
+  IdArray global_nids = ToGlobal(nids, global_nid_map);
+  auto* coor = DSContext::Global()->coordinator.get();
+  auto ret = Rebalance(global_nids, batch_size, coor);
+  *rv = ret;
+});
+
 }
 }

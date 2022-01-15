@@ -45,7 +45,7 @@ class NeighborSampler(object):
     '''
     def sample_blocks(self, g, seeds, exclude_eids=None):
         blocks = []
-        is_local = True
+        is_local = False 
         for fanout in self.fanouts:
             # For each seed node, sample ``fanout`` neighbors.
             frontier = self.sample_neighbors(self.g, self.num_vertices,
@@ -92,10 +92,15 @@ def run(rank, args):
     #test_sampling(num_vertices, g, rank)
     #time.sleep(2)
     #exit(0)
+    g = dgl.add_self_loop(g)
 
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
+
+    print('rank {}, # global: {}, # local: {}'.format(rank, num_vertices, n_local_nodes))
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
-    print(train_nid.size()[0] / 1024)
+    train_nid = dgl.ds.rebalance_train_nids(train_nid, args.batch_size, g.ndata[dgl.NID])
+
+    print('# batch: ', train_nid.size()[0] / args.batch_size)
     #tansfer graph and train nodes to gpu
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
@@ -125,22 +130,12 @@ def run(rank, args):
 
     th.distributed.barrier()
     stop_epoch = -1
-    if args.n_ranks == 2:
-        stop_epoch = 74
-    elif args.n_ranks == 4:
-        stop_epoch = 33
-    elif args.n_ranks == 8:
-        stop_epoch = 17
     total = 0
     skip_epoch = 5
     for epoch in range(args.num_epochs):
         tic = time.time()
-        cnt = 0
         for step, blocks in enumerate(dataloader):
-            # print("batch:", cnt)
-            cnt += 1
-            if cnt == stop_epoch:
-                break
+            pass
         toc = time.time()
         if epoch >= skip_epoch:
             total += (toc - tic)
