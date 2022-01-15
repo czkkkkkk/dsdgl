@@ -12,7 +12,7 @@
 namespace dgl {
 namespace ds {
 
-enum CommEvent { Allgather = 0, Scatter = 1, Broadcast = 2, RingExchange = 3 };
+enum CommEvent { Allgather = 0, Scatter = 1, Gather = 2, Broadcast = 3, RingExchange = 4 };
 
 struct ProcInfo {
   int pid;
@@ -99,8 +99,31 @@ class Coordinator {
     T ret;
     *my_msg >> e >> ret;
     CHECK(e == CommEvent::Scatter);
+    Barrier();
     return ret;
   }
+  template <typename T>
+  std::vector<T> Gather(const T& val) {
+    auto bs = std::make_shared<BinStream>();
+    *bs << CommEvent::Gather << rank_ << val;
+    SendBinstreamTo(-1, bs);
+    std::vector<T> ret;
+    if(IsRoot()) {
+      ret.resize(n_peers_);
+      for(int i = 0; i < n_peers_; ++i) {
+        auto bs = RootRecvBinStream();
+        CommEvent e;
+        int rank;
+        T v;
+        *bs >> e >> rank >> v;
+        CHECK(e == CommEvent::Gather);
+        ret[rank] = v;
+      }
+    }
+    Barrier();
+    return ret;
+  }
+
   template <typename T>
   void Broadcast(T &val) {
     if (IsRoot()) {
