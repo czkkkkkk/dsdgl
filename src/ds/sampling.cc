@@ -201,6 +201,26 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSRebalanceNIds")
   auto* coor = DSContext::Global()->coordinator.get();
   auto ret = Rebalance(global_nids, batch_size, coor);
   *rv = ret;
+void SampleUVA(IdArray frontier, IdArray row_idx, const HeteroGraphPtr hg, int fanout, bool replace, IdArray* neighbors, IdArray* edges) {
+  assert(hg->NumEdgeTypes() == 1);
+  dgl_type_t etype = 0;
+  CSRMatrix csr_mat = hg->GetCSRMatrix(etype);
+  SampleNeighborsUVA(frontier, row_idx, csr_mat, fanout, neighbors, edges);
+}
+
+DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighborsUVA")
+.set_body([] (DGLArgs args, DGLRetValue *rv) {
+  IdArray row_idx = args[0];
+  HeteroGraphRef hg = args[1];
+  IdArray seeds = args[2];
+  int fanout = args[3];
+  bool replace = args[4];
+  IdArray neighbors, edges;
+  SampleUVA(seeds, row_idx, hg.sptr(), fanout, replace, &neighbors, &edges);
+  uint64_t num_vertices = row_idx->shape[0];
+  HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, neighbors);
+  MemoryManager::Global()->ClearUseCount();
+  *rv = HeteroGraphRef(subg);
 });
 
 }
