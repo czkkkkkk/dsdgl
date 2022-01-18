@@ -29,10 +29,10 @@ def prepare_tensor(g, data, name):
         Data in tensor object.
     """
     if F.is_tensor(data):
-        if F.dtype(data) != g.idtype or F.context(data) != g.device:
-            raise DGLError('Expect argument "{}" to have data type {} and device '
-                           'context {}. But got {} and {}.'.format(
-                               name, g.idtype, g.device, F.dtype(data), F.context(data)))
+        # if F.dtype(data) != g.idtype or F.context(data) != g.device:
+        #     raise DGLError('Expect argument "{}" to have data type {} and device '
+        #                    'context {}. But got {} and {}.'.format(
+        #                        name, g.idtype, g.device, F.dtype(data), F.context(data)))
         ret = data
     else:
         data = F.tensor(data)
