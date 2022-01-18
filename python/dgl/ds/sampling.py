@@ -9,6 +9,7 @@ from ..convert import graph
 __all__ = [
     'sample_neighbors',
     'rebalance_train_nids'
+    'sample_neighbors_uva',
     ]
 
 # def sample_neighbors(g, gpb, seeds, fanout, context):
@@ -56,9 +57,6 @@ def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, f
                                          fanout, edge_dir, prob_arrays, replace, global_nid_map, is_local)
 
     src, dst, eid = subgidx.edges(0)
-    # print("src:", src.size())
-    # print("dst:", dst.size())
-    # print("eid:", eid.size())
     ret = graph((dst, src), num_nodes = num_vertices)
     # print("finish convert graph")
     # todo zqh handle features
@@ -75,6 +73,11 @@ def rebalance_train_nids(train_nids, batch_size, global_nid_map):
     global_nid_map = F.to_dgl_nd(global_nid_map)
     ret = _CAPI_DGLDSRebalanceNIds(train_nids, batch_size, global_nid_map)
     ret = F.from_dgl_nd(ret)
+def sample_neighbors_uva(row_idx, g, nodes, num_vertices, fanout, replace=True):
+    nodes = F.to_dgl_nd(nodes)
+    subgidx = _CAPI_DGLDSSampleNeighborsUVA(row_idx, g._graph, nodes, fanout, replace)
+    src, dst, eid = subgidx.edges(0)
+    ret = graph((dst, src), num_nodes = num_vertices)
     return ret
 
 _init_api("dgl.ds.sampling")
