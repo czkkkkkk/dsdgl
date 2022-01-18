@@ -201,6 +201,8 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSRebalanceNIds")
   auto* coor = DSContext::Global()->coordinator.get();
   auto ret = Rebalance(global_nids, batch_size, coor);
   *rv = ret;
+});
+
 void SampleUVA(IdArray frontier, IdArray row_idx, const HeteroGraphPtr hg, int fanout, bool replace, IdArray* neighbors, IdArray* edges) {
   assert(hg->NumEdgeTypes() == 1);
   dgl_type_t etype = 0;
