@@ -63,14 +63,14 @@ def run(args, device, data):
 
     # Create PyTorch DataLoader for constructing blocks
     sampler = dgl.dataloading.MultiLayerNeighborSampler(
-        [int(fanout) for fanout in args.fan_out.split(',')])
+        [int(fanout) for fanout in args.fan_out.split(',')], replace=True)
     dataloader = dgl.dataloading.NodeDataLoader(
         train_g,
         train_nid,
         sampler,
         device=dataloader_device,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=False,
         drop_last=False,
         num_workers=args.num_workers)
 
@@ -92,7 +92,7 @@ def run(args, device, data):
         # blocks.
         tic_step = time.time()
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
-            print("batch:", cnt)
+            # print("batch:", cnt)
             cnt += 1
             # Load the input features as well as output labels
             # batch_inputs, batch_labels = load_subtensor(train_nfeat, train_labels,
@@ -134,7 +134,7 @@ if __name__ == '__main__':
     argparser.add_argument('--num-epochs', type=int, default=1)
     argparser.add_argument('--num-hidden', type=int, default=16)
     argparser.add_argument('--num-layers', type=int, default=2)
-    argparser.add_argument('--fan-out', type=str, default='25,10')
+    argparser.add_argument('--fan-out', type=str, default='10,25')
     argparser.add_argument('--batch-size', type=int, default=1000)
     argparser.add_argument('--log-every', type=int, default=20)
     argparser.add_argument('--eval-every', type=int, default=5)

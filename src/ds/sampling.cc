@@ -34,7 +34,8 @@ void Sample(IdArray frontier, const HeteroGraphPtr hg, int fanout, bool replace,
   assert(hg->NumEdgeTypes() == 1);
   dgl_type_t etype = 0;
   CSRMatrix csr_mat = hg->GetCSRMatrix(etype);
-  SampleNeighbors(frontier, csr_mat, fanout, neighbors, edges);
+  // SampleNeighbors(frontier, csr_mat, fanout, neighbors, edges);
+  SampleNeighborsV2(frontier, csr_mat, fanout, neighbors, edges);
 }
 
 void Check(IdArray array, uint64 limit) {

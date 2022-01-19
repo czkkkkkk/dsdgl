@@ -53,8 +53,8 @@ class NeighborSampler(object):
                                              seeds, fanout, self.global_nid_map, is_local = is_local)
             is_local = False
             # Then we compact the frontier into a bipartite graph for message passing.
-            # block = dgl.to_block(frontier, seeds)
-            block = ds.to_block(frontier, seeds)
+            block = dgl.to_block(frontier, seeds)
+            # block = ds.to_block(frontier, seeds)
             # Obtain the seed nodes for next layer.
             seeds = block.srcdata[dgl.NID]
             blocks.insert(0, block)
