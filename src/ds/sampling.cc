@@ -177,6 +177,9 @@ IdArray Rebalance(IdArray ids, int batch_size, Coordinator* coor) {
         }
       }
     }
+    for(auto& vec: vecs) {
+      std::random_shuffle(vec.begin(), vec.end());
+    }
   }
   auto ret = coor->Scatter(vecs);
   return NDArray::FromVector(ret);

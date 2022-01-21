@@ -55,6 +55,7 @@ void ConvertGidToLid(IdArray global_ids, IdArray min_vids, int rank) {
   auto* global_ids_ptr = global_ids.Ptr<IdType>();
   auto* min_vids_ptr = min_vids.Ptr<IdType>();
   _GidToLidKernel<<<BLOCK_NUM, BLOCK_SIZE>>>(global_ids_ptr, global_ids->shape[0], min_vids_ptr, rank);
+  CUDACHECK(cudaGetLastError());
 }
 
 __global__
@@ -70,6 +71,7 @@ void ConvertLidToGid(IdArray local_ids, IdArray global_nid_map) {
   auto* local_ids_ptr = local_ids.Ptr<IdType>();
   auto* global_nid_map_ptr = global_nid_map.Ptr<IdType>();
   _LidToGidKernel<<<BLOCK_NUM, BLOCK_SIZE>>>(local_ids_ptr, local_ids->shape[0], global_nid_map_ptr);
+  CUDACHECK(cudaGetLastError());
 }
 
 __global__
@@ -124,6 +126,7 @@ void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_size
   _CountDeviceVerticesKernel<<<n_blocks, n_threads>>>(world_size, min_vids.Ptr<IdType>(),
                                                         n_seeds, seeds.Ptr<IdType>(),
                                                         send_sizes->Ptr<IdType>());
+  CUDACHECK(cudaGetLastError());
   *send_offset = CumSum(*send_sizes, true);
   // thrust::exclusive_scan(thrust::device_ptr<IdType>(send_sizes->Ptr<IdType>()), 
   //                        thrust::device_ptr<IdType>(send_sizes->Ptr<IdType>()) + world_size + 1, send_offset->Ptr<IdType>());  
@@ -252,16 +255,23 @@ void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* n
   constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
   const dim3 block(WARP_SIZE, BLOCK_ROWS);
   const dim3 grid((n_frontier + block.y - 1) / block.y);
-  _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block>>>(
-    fanout, n_frontier, frontier.Ptr<IdType>(), csr_mat.indptr.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(), csr_mat.data.Ptr<IdType>(),
-    edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>(), edges->Ptr<IdType>()
-  );
+  if(grid.x > 0) {
+    _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block>>>(
+      fanout, n_frontier, frontier.Ptr<IdType>(), csr_mat.indptr.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(), csr_mat.data.Ptr<IdType>(),
+      edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>(), edges->Ptr<IdType>()
+    );
+    CUDACHECK(cudaGetLastError());
+  }
   // CUDACHECK(cudaDeviceSynchronize());
 }
 
 void SampleNeighborsV2(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges) {
-  auto coo = CSRRowWiseSampling(csr_mat, frontier, fanout, NullArray(frontier->dtype, frontier->ctx));
-  *neighbors = coo.col;
+  if(frontier->shape[0] == 0) {
+    *neighbors = NullArray(frontier->dtype, frontier->ctx);
+  } else {
+    auto coo = CSRRowWiseSampling(csr_mat, frontier, fanout, NullArray(frontier->dtype, frontier->ctx));
+    *neighbors = coo.col;
+  }
 }
 
 void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_send_offset, IdArray host_shuffle_recv_offset, int rank, int world_size, ncclComm_t nccl_comm, IdArray* reshuffled_neighbors) {
@@ -312,7 +322,7 @@ void Replicate(IdArray src, IdArray *dst, int fanout) {
   _CSRRowWiseReplicateKernel<BLOCK_ROWS><<<grid, block>>>(
     n_seeds, src_ptr, dst_ptr, fanout
   );
-  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaGetLastError());
 }
 
 void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges) {
