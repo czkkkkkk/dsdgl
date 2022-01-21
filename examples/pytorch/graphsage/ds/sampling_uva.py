@@ -42,7 +42,7 @@ class NeighborSampler(object):
     '''
     def sample_blocks(self, g, seeds, exclude_eids=None):
         blocks = []
-        # seeds = seeds.to(self.device)
+        seeds = seeds.to(self.device)
         for fanout in self.fanouts:
             # For each seed node, sample ``fanout`` neighbors.
             frontier = self.sample_neighbors(self.row_idx, self.g, seeds, self.num_vertices, fanout)
@@ -62,14 +62,8 @@ def run(rank, args, data):
 
     train_mask = train_g.ndata['train_mask']
     train_nid = train_mask.nonzero().squeeze()
-    chunk_size = train_nid.shape[0] / args.n_ranks
-    start = int(rank * chunk_size)
-    end = int((rank + 1) * chunk_size)
-    if end > train_nid.shape[0]:
-        end = train_nid.shape[0]
-    train_nid = train_nid[start : end]
     num_vertices = train_nfeat.shape[0]
-    train_nid = train_nid.to(rank)
+    #train_nid = train_nid.to(rank)
     train_g = train_g.formats(['csr'])
 
     # row_idx on gpu, cols in train_g on uva
@@ -82,6 +76,7 @@ def run(rank, args, data):
         train_g,
         train_nid,
         sampler,
+        use_ddp=True,
         device=rank,
         batch_size=args.batch_size,
         shuffle=False,
@@ -102,6 +97,7 @@ def run(rank, args, data):
         tic = time.time()
         cnt = 0
         for step, blocks in enumerate(dataloader):
+            # print("batch:", cnt)
             cnt += 1
             th.distributed.barrier()
             if cnt == stop_epoch:
@@ -122,7 +118,7 @@ if __name__ == '__main__':
   parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
   parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
   parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
-  parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
+  parser.add_argument('--num_epochs', default=10, type=int, help='Epochs')
   args = parser.parse_args()
 
   g, n_classes = load_reddit()
