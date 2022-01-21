@@ -43,8 +43,6 @@ void ReshuffleV2(IdArray neighbors, int fanout, IdArray host_shuffle_recv_offset
 
 void Replicate(IdArray src, IdArray *des, int fanout);
 
-void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges);
-
 }
 }
 

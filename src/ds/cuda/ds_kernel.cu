@@ -227,7 +227,7 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
       const uint64 edge = curand(rng) % deg;
       const uint64 out_idx = out_row_start + idx;
       out_index[out_idx] = in_index[in_row_start + edge];
-      //out_edges[out_idx] = edge_index[in_row_start + edge];
+      out_edges[out_idx] = edge_index[in_row_start + edge];
     }
     out_row += gridDim.x * blockDim.y;
   }
@@ -302,25 +302,6 @@ void Replicate(IdArray src, IdArray *dst, int fanout) {
   const dim3 grid((n_seeds + block.y - 1) / block.y);
   _CSRRowWiseReplicateKernel<BLOCK_ROWS><<<grid, block>>>(
     n_seeds, src_ptr, dst_ptr, fanout
-  );
-  CUDACHECK(cudaDeviceSynchronize());
-}
-
-void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges) {
-  auto dgl_ctx = frontier->ctx;
-  int n_frontier = frontier->shape[0];
-  IdArray edge_offset = MemoryManager::Global()->Full<int64_t>("EDGE_OFFSET", fanout, n_frontier + 1, dgl_ctx);
-  auto edge_offset_ptr = thrust::device_ptr<IdType>(edge_offset.Ptr<IdType>());
-  thrust::exclusive_scan(edge_offset_ptr, edge_offset_ptr + n_frontier + 1, edge_offset_ptr);
-  *neighbors = MemoryManager::Global()->Empty("NEIGHBORS", {n_frontier * fanout}, frontier->dtype, dgl_ctx);
-  *edges = MemoryManager::Global()->Empty("EDGES", {n_frontier * fanout}, frontier->dtype, dgl_ctx);
-
-  constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
-  const dim3 block(WARP_SIZE, BLOCK_ROWS);
-  const dim3 grid((n_frontier + block.y - 1) / block.y);
-  _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block>>>(
-    fanout, n_frontier, frontier.Ptr<IdType>(), row_idx.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(), csr_mat.data.Ptr<IdType>(),
-    edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>(), edges->Ptr<IdType>()
   );
   CUDACHECK(cudaDeviceSynchronize());
 }
