@@ -73,8 +73,6 @@ def rebalance_train_nids(train_nids, batch_size, global_nid_map):
     global_nid_map = F.to_dgl_nd(global_nid_map)
     ret = _CAPI_DGLDSRebalanceNIds(train_nids, batch_size, global_nid_map)
     ret = F.from_dgl_nd(ret)
-    return ret
-
 def sample_neighbors_uva(row_idx, g, nodes, num_vertices, fanout, replace=True):
     nodes = F.to_dgl_nd(nodes)
     subgidx = _CAPI_DGLDSSampleNeighborsUVA(row_idx, g._graph, nodes, fanout, replace)
