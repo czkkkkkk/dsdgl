@@ -19,7 +19,7 @@ import time
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
+    os.environ['MASTER_PORT'] = '12375'
 
     # initialize the process group
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
@@ -93,9 +93,7 @@ def run(rank, args):
     #time.sleep(2)
     #exit(0)
     g = dgl.add_self_loop(g)
-
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
-
     print('rank {}, # global: {}, # local: {}'.format(rank, num_vertices, n_local_nodes))
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
     train_nid = dgl.ds.rebalance_train_nids(train_nid, args.batch_size, g.ndata[dgl.NID])
@@ -107,6 +105,13 @@ def run(rank, args):
     train_g = g.formats(['csr'])
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
     train_g = train_g.to(device)
+    th.cuda.synchronize(device)
+    train_feature = node_feats['_N/features']
+    train_feature = train_feature.to(device)
+    th.cuda.synchronize(device)
+    train_label = node_feats['_N/labels']
+    train_label = train_label.to(device)
+    th.cuda.synchronize(device)
     global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu
     min_vids = [0] + list(gpb._max_node_ids)
@@ -133,10 +138,16 @@ def run(rank, args):
     stop_epoch = -1
     total = 0
     skip_epoch = 5
+    min_vids = F.tensor(min_vids, dtype=F.int64).to(device)
     for epoch in range(args.num_epochs):
         tic = time.time()
-        for step, blocks in enumerate(dataloader):
-            pass
+        for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
+            # batch_inputs = dgl.ds.load_subtensor(train_feature, input_nodes)
+            test = th.tensor([2,3,1], dtype=F.int64).to(device)
+            test_feature = th.tensor([[0,0], [1,1], [2,2], [3,3]], dtype=F.int64).to(device)
+            ret = dgl.ds.load_subtensor(test_feature, test, min_vids)
+            print(rank, ret)
+            exit()
         toc = time.time()
         if epoch >= skip_epoch:
             total += (toc - tic)
@@ -151,11 +162,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='GCN')
     register_data_args(parser)
     parser.add_argument('--graph_name', default='test', type=str, help='graph name')
-    parser.add_argument('--part_config', default='./data-8/reddit.json', type=str, help='The path to the partition config file')
-    parser.add_argument('--n_ranks', default=8, type=int, help='Number of ranks')
+    parser.add_argument('--part_config', default='./data-2/reddit.json', type=str, help='The path to the partition config file')
+    parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
     parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
-    parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
+    parser.add_argument('--num_epochs', default=1, type=int, help='Epochs')
     args = parser.parse_args()
 
     mp.spawn(run,

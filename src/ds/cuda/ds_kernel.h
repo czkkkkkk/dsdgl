@@ -49,6 +49,8 @@ void Replicate(IdArray src, IdArray *des, int fanout);
 
 void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges);
 
+void LoadFeature(IdArray frontier, IdArray features, IdArray *features_to_send);
+
 }
 }
 
