@@ -48,6 +48,7 @@ void Initialize(int rank, int world_size) {
   ds_context->rank = rank;
   ds_context->world_size = world_size;
   ds_context->coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size));
+  cudaSetDevice(rank);
 
   int use_nccl = GetEnvParam("USE_NCCL", 0);
   if(!use_nccl) {
