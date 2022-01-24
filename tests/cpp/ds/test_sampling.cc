@@ -10,7 +10,7 @@
 
 using namespace dgl::ds;
 
-using IdType = unsigned long long int;
+using IdType = int64_t;
 
 /*
 void _TestCluster(int world_size, const std::vector<IdType>& vid_base, const std::vector<IdType>& seeds) {
