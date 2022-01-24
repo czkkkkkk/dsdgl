@@ -76,13 +76,13 @@ void ConvertLidToGid(IdArray local_ids, IdArray global_nid_map) {
 
 __global__
 void _CountDeviceVerticesKernel(int device_cnt, 
-                                uint64 *device_vid_base,
-                                uint64 num_seed, 
-                                uint64 *seeds,
-                                uint64 *device_col_cnt) {
-  __shared__ uint64 local_count[9];
-  __shared__ uint64 device_vid[9];
-  uint64 idx = blockDim.x * blockIdx.x + threadIdx.x;
+                                IdType *device_vid_base,
+                                IdType num_seed, 
+                                IdType *seeds,
+                                IdType *device_col_cnt) {
+  __shared__ IdType local_count[9];
+  __shared__ IdType device_vid[9];
+  IdType idx = blockDim.x * blockIdx.x + threadIdx.x;
   int stride = gridDim.x * blockDim.x;
 
   if (threadIdx.x <= device_cnt) {
@@ -92,21 +92,21 @@ void _CountDeviceVerticesKernel(int device_cnt,
 
   __syncthreads();
 
-  uint64_t device_id, vid;
+  IdType device_id, vid;
   while (idx < num_seed) {
     device_id = 0;
     vid = seeds[idx];
     while (device_id + 1 < device_cnt && device_vid[device_id + 1] <= vid) {
       ++device_id;
     }
-    atomicAdd(&local_count[device_id], 1);
+    atomicAdd((unsigned long long *)(local_count + device_id), 1);
     idx += stride;
   }
 
   __syncthreads();
 
   if (threadIdx.x < device_cnt) {
-    atomicAdd(&device_col_cnt[threadIdx.x], local_count[threadIdx.x]); 
+    atomicAdd((unsigned long long*)(device_col_cnt + threadIdx.x), local_count[threadIdx.x]); 
   }
 
 }
@@ -199,14 +199,14 @@ void ShuffleV2(IdArray seeds, IdArray send_offset, int rank, int world_size, IdA
 template <int BLOCK_ROWS>
 __global__ void _CSRRowWiseSampleReplaceKernel(
     int fanout, 
-    uint64 num_frontier, 
-    uint64 *frontier,
-    uint64 *in_ptr, 
-    uint64 *in_index,
-    uint64 *edge_index,
-    uint64 *out_ptr, 
-    uint64 *out_index,
-    uint64 *out_edges) {
+    IdType num_frontier, 
+    IdType *frontier,
+    IdType *in_ptr, 
+    IdType *in_index,
+    IdType *edge_index,
+    IdType *out_ptr, 
+    IdType *out_index,
+    IdType *out_edges) {
   assert(blockDim.x == WARP_SIZE);
   constexpr int NUM_RNG = ((WARP_SIZE*BLOCK_ROWS)+255)/256;
   // __shared__ curandState rng_array[NUM_RNG];
@@ -224,15 +224,15 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
   // curandState * const rng = rng_array+((threadIdx.x+WARP_SIZE*threadIdx.y)/256);
   curandState * const rng = rng_array + pos;
 
-  uint64 out_row = blockIdx.x*blockDim.y+threadIdx.y;
+  IdType out_row = blockIdx.x*blockDim.y+threadIdx.y;
   while (out_row < num_frontier) {
-    const uint64 row = frontier[out_row];
-    const uint64 in_row_start = in_ptr[row];
-    const uint64 out_row_start = out_ptr[out_row];
-    const uint64 deg = in_ptr[row + 1] - in_row_start;
+    const IdType row = frontier[out_row];
+    const IdType in_row_start = in_ptr[row];
+    const IdType out_row_start = out_ptr[out_row];
+    const IdType deg = in_ptr[row + 1] - in_row_start;
     for (int idx = threadIdx.x; idx < fanout; idx += blockDim.x) {
-      const uint64 edge = curand(rng) % deg;
-      const uint64 out_idx = out_row_start + idx;
+      const IdType edge = curand(rng) % deg;
+      const IdType out_idx = out_row_start + idx;
       out_index[out_idx] = in_index[in_row_start + edge];
       //out_edges[out_idx] = edge_index[in_row_start + edge];
     }
@@ -292,15 +292,37 @@ void ReshuffleV2(IdArray neighbors, int fanout, IdArray host_shuffle_recv_offset
   AllToAllV2(neighbors, shuffle_recv_offset, reshuffled_neighbors, &recv_offset, rank, world_size, "RESHUFFLEV2");
 }
 
+__global__
+void _RemapKernel(IdType* dst, IdType* src, IdType* index, int size, int fanout) {
+  int tid = blockDim.x * blockIdx.x + threadIdx.x;
+  int stride = gridDim.x * blockDim.x;
+  while(tid < size * fanout) {
+    IdType vid = tid / fanout;
+    IdType dst_pos = index[vid] * fanout + tid % fanout;
+    dst[dst_pos] = src[tid];
+    tid += stride;
+  }
+}
+
+IdArray Remap(IdArray neighbors, IdArray index, int fanout) {
+  CHECK_EQ(neighbors->shape[0], index->shape[0] * fanout);
+  IdArray ret = IdArray::Empty({neighbors->shape[0]}, neighbors->dtype, neighbors->ctx);
+  int n_threads = 512;
+  int n_blocks = std::max(1l, (neighbors->shape[0] + n_threads - 1) / n_threads);
+  _RemapKernel<<<n_blocks, n_threads>>>(ret.Ptr<IdType>(), neighbors.Ptr<IdType>(), index.Ptr<IdType>(), index->shape[0], fanout);
+  CUDACHECK(cudaGetLastError());
+  return ret;
+}
+
 template <int BLOCK_ROWS>
 __global__ void _CSRRowWiseReplicateKernel(
-    uint64 size,
-    uint64 *src,
-    uint64 *dst,
+    IdType size,
+    IdType *src,
+    IdType *dst,
     int fanout) {
-  uint64 out_row = blockIdx.x * blockDim.y + threadIdx.y;
+  IdType out_row = blockIdx.x * blockDim.y + threadIdx.y;
   while (out_row < size) {
-    const uint64 out_row_start = out_row * fanout;
+    const IdType out_row_start = out_row * fanout;
     for (int idx = threadIdx.x; idx < fanout; idx += blockDim.x) {
       dst[out_row_start + idx] = src[out_row];
     }

@@ -9,8 +9,8 @@
 
 using namespace dgl;
 using namespace dgl::aten;
-using uint64 = unsigned long long int;
-using IdType = uint64;
+
+using IdType = int64_t;
 
 namespace dgl {
 namespace ds {
@@ -42,6 +42,8 @@ void SampleNeighborsV2(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray*
 void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_send_offset, IdArray host_shuffle_recv_offset, int rank, int world_size, ncclComm_t nccl_comm, IdArray* reshuffled_neighbors);
 
 void ReshuffleV2(IdArray neighbors, int fanout, IdArray host_shuffle_recv_offset, int rank, int world_size, IdArray* reshuffled_neighbors);
+
+IdArray Remap(IdArray neighbors, IdArray index, int fanout);
 
 void Replicate(IdArray src, IdArray *des, int fanout);
 

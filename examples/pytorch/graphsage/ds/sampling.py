@@ -105,6 +105,7 @@ def run(rank, args):
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
     train_g = g.formats(['csr'])
+    train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
     train_g = train_g.to(device)
     global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu

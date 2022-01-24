@@ -8,8 +8,9 @@ from ..convert import graph
 
 __all__ = [
     'sample_neighbors',
-    'rebalance_train_nids'
+    'rebalance_train_nids',
     'sample_neighbors_uva',
+    'csr_to_global_id'
     ]
 
 # def sample_neighbors(g, gpb, seeds, fanout, context):
@@ -81,5 +82,11 @@ def sample_neighbors_uva(row_idx, g, nodes, num_vertices, fanout, replace=True):
     src, dst, eid = subgidx.edges(0)
     ret = graph((dst, src), num_nodes = num_vertices)
     return ret
+
+def csr_to_global_id(g, global_nid_map):
+    global_nid_map = F.to_dgl_nd(global_nid_map)
+    g._graph = _CAPI_DGLDSCSRToGlobalId(g._graph, global_nid_map)
+    return g
+
 
 _init_api("dgl.ds.sampling")
