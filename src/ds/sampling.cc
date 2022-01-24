@@ -38,18 +38,18 @@ void Sample(IdArray frontier, const HeteroGraphPtr hg, int fanout, bool replace,
   SampleNeighborsV2(frontier, csr_mat, fanout, neighbors, edges);
 }
 
-void Check(IdArray array, uint64 limit) {
+void Check(IdArray array, IdType limit) {
   int size = array->shape[0];
-  uint64 *data = array.Ptr<IdType>();
-  uint64 *hdata = new uint64[size];
-  CUDACHECK(cudaMemcpy(hdata, data, sizeof(uint64) * size, cudaMemcpyDeviceToHost));
+  IdType *data = array.Ptr<IdType>();
+  IdType *hdata = new IdType[size];
+  CUDACHECK(cudaMemcpy(hdata, data, sizeof(IdType) * size, cudaMemcpyDeviceToHost));
   for (int i=0; i<size; i++) {
     assert(hdata[i] < limit);
   }
   delete[] hdata;
 }
 
-HeteroGraphPtr CreateCOO(uint64_t num_vertices, IdArray seeds, int fanout, IdArray dst) {
+HeteroGraphPtr CreateCOO(IdType num_vertices, IdArray seeds, int fanout, IdArray dst) {
   IdArray src;
   Replicate(seeds, &src, fanout);
   return UnitGraph::CreateFromCOO(1, num_vertices, num_vertices, src, dst);
@@ -58,7 +58,7 @@ HeteroGraphPtr CreateCOO(uint64_t num_vertices, IdArray seeds, int fanout, IdArr
 void Show(IdArray array, int rank) {
   IdArray host_array = array.CopyTo(DLContext({kDLCPU, 0}));
   printf("rank %d ", rank);
-  uint64 *dst = host_array.Ptr<uint64>();
+  IdType *dst = host_array.Ptr<IdType>();
   for (int i=0; i<host_array->shape[0]; i++) {
     printf("%d ", dst[i]);
   }
@@ -68,7 +68,7 @@ void Show(IdArray array, int rank) {
 DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   HeteroGraphRef hg = args[0];
-  uint64_t num_vertices = args[1];
+  IdType num_vertices = args[1];
   IdArray min_vids = args[2];
   IdArray min_eids = args[3];
   IdArray seeds = args[4];
@@ -94,6 +94,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
     ConvertLidToGid(seeds, global_nid_map);
   }
   IdArray idx;
+  IdArray original_seeds = seeds.Clone();
   std::tie(seeds, idx) = Sort(seeds);
 
   IdArray send_sizes, send_offset;
@@ -113,7 +114,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   IdArray neighbors, edges;
   Sample(frontier, hg.sptr(), fanout, replace, &neighbors, &edges);
 
-  ConvertLidToGid(neighbors, global_nid_map);
+  // ConvertLidToGid(neighbors, global_nid_map);
   
   IdArray reshuffled_neighbors;
   if(use_nccl) {
@@ -121,11 +122,12 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   } else {
     ReshuffleV2(neighbors, fanout, host_recv_offset, rank, world_size, &reshuffled_neighbors);
   }
+  reshuffled_neighbors = Remap(reshuffled_neighbors, idx, fanout);
 
   // LOG(INFO) << "Reshuffled neibhgors: " << ToDebugString(reshuffled_neighbors);
   
   // ConvertGidToLid(seeds, min_vids, rank);
-  HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, reshuffled_neighbors);
+  HeteroGraphPtr subg = CreateCOO(num_vertices, original_seeds, fanout, reshuffled_neighbors);
 
   MemoryManager::Global()->ClearUseCount();
   *rv = HeteroGraphRef(subg);
@@ -207,6 +209,17 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSRebalanceNIds")
   *rv = ret;
 });
 
+DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSCSRToGlobalId")
+.set_body([] (DGLArgs args, DGLRetValue *rv) {
+  HeteroGraphRef hg = args[0];
+  IdArray global_nid_map = args[1];
+  assert(hg->NumEdgeTypes() == 1);
+  dgl_type_t etype = 0;
+  CSRMatrix csr_mat = hg->GetCSRMatrix(etype);
+  csr_mat.indices = ToGlobal(csr_mat.indices, global_nid_map);
+  *rv = hg;
+});
+
 void SampleUVA(IdArray frontier, IdArray row_idx, const HeteroGraphPtr hg, int fanout, bool replace, IdArray* neighbors, IdArray* edges) {
   assert(hg->NumEdgeTypes() == 1);
   dgl_type_t etype = 0;
@@ -223,7 +236,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighborsUVA")
   bool replace = args[4];
   IdArray neighbors, edges;
   SampleUVA(seeds, row_idx, hg.sptr(), fanout, replace, &neighbors, &edges);
-  uint64_t num_vertices = row_idx->shape[0];
+  IdType num_vertices = row_idx->shape[0];
   HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, neighbors);
   MemoryManager::Global()->ClearUseCount();
   *rv = HeteroGraphRef(subg);

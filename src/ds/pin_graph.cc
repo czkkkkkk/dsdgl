@@ -14,7 +14,7 @@
 #include "cuda/cuda_utils.h"
 #include "./memory_manager.h"
 #include <assert.h>
-#include "cuda/test.h"
+// #include "cuda/test.h"
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
@@ -57,6 +57,7 @@ DGL_REGISTER_GLOBAL("ds.pin_graph._CAPI_DGLDSPinGraph")
   *rv = ret;
 });
 
+/*
 DGL_REGISTER_GLOBAL("ds.pin_graph._CAPI_DGLDSPinGraphTest")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   IdArray array = args[0];
@@ -70,6 +71,7 @@ DGL_REGISTER_GLOBAL("ds.pin_graph._CAPI_DGLDSPinGraphTest")
   TestInc(data, size);
   CUDACHECK(cudaDeviceSynchronize());
 });
+*/
 
 }
 }
