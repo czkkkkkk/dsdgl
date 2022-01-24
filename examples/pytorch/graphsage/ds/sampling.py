@@ -19,7 +19,7 @@ import time
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12375'
+    os.environ['MASTER_PORT'] = '12475'
 
     # initialize the process group
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
@@ -105,13 +105,10 @@ def run(rank, args):
     train_g = g.formats(['csr'])
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
     train_g = train_g.to(device)
-    th.cuda.synchronize(device)
     train_feature = node_feats['_N/features']
     train_feature = train_feature.to(device)
-    th.cuda.synchronize(device)
     train_label = node_feats['_N/labels']
     train_label = train_label.to(device)
-    th.cuda.synchronize(device)
     global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu
     min_vids = [0] + list(gpb._max_node_ids)
@@ -143,10 +140,11 @@ def run(rank, args):
         tic = time.time()
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
             # batch_inputs = dgl.ds.load_subtensor(train_feature, input_nodes)
-            test = th.tensor([2,3,1], dtype=F.int64).to(device)
+            test = th.tensor([2,1,0], dtype=F.int64).to(device)
             test_feature = th.tensor([[0,0], [1,1], [2,2], [3,3]], dtype=F.int64).to(device)
             ret = dgl.ds.load_subtensor(test_feature, test, min_vids)
             print(rank, ret)
+            th.distributed.barrier()
             exit()
         toc = time.time()
         if epoch >= skip_epoch:

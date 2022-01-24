@@ -108,10 +108,13 @@ void _CountDeviceVerticesKernel(int device_cnt,
   if (threadIdx.x < device_cnt) {
     atomicAdd((unsigned long long*)(device_col_cnt + threadIdx.x), local_count[threadIdx.x]); 
   }
+
 }
 
 void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_sizes, IdArray* send_offset) {
   int n_seeds = seeds->shape[0];
+  // thrust::device_ptr<IdType> seeds_ptr(seeds.Ptr<IdType>());
+  // thrust::sort(seeds_ptr, seeds_ptr + n_seeds);
   auto dgl_ctx = seeds->ctx;
   *send_sizes = Full<int64_t>(0, world_size, dgl_ctx);
   *send_offset = Full<int64_t>(0, world_size + 1, dgl_ctx);
@@ -129,27 +132,24 @@ void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_size
   //                        thrust::device_ptr<IdType>(send_sizes->Ptr<IdType>()) + world_size + 1, send_offset->Ptr<IdType>());  
 }
 
-void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, IdType expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
+void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
   IdType* send_buffer_ptr = send_buffer.Ptr<IdType>();
   IdType* recv_buffer_ptr = recv_buffer.Ptr<IdType>();
   IdType* send_offset_ptr = send_offset.Ptr<IdType>();
   IdType* recv_offset_ptr = recv_offset.Ptr<IdType>();
-  CUDACHECK(cudaMemcpy((char*)(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size), 
-                       (char*)(send_buffer_ptr + send_offset_ptr[rank] * expand_size), 
-                       (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * sizeof(IdType), 
-                       cudaMemcpyDeviceToDevice));
-  NCCLCHECK(ncclGroupStart());
+  cudaMemcpy(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, send_buffer_ptr + send_offset_ptr[rank] * expand_size, (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * sizeof(IdType), cudaMemcpyDeviceToDevice);
+  ncclGroupStart();
   for(int r = 0; r < world_size; ++r) {
     if(r != rank) {
       IdType send_size = (send_offset_ptr[r+1] - send_offset_ptr[r]) * expand_size;
       IdType send_ptr = send_offset_ptr[r] * expand_size;
       IdType recv_size = (recv_offset_ptr[r+1] - recv_offset_ptr[r]) * expand_size;
       IdType recv_ptr = recv_offset_ptr[r] * expand_size;
-      NCCLCHECK(ncclSend(send_buffer_ptr + send_ptr, send_size, ncclUint64, r, nccl_comm, 0));
-      NCCLCHECK(ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, ncclUint64, r, nccl_comm, 0));
+      ncclSend(send_buffer_ptr + send_ptr, send_size, ncclUint64, r, nccl_comm, 0);
+      ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, ncclUint64, r, nccl_comm, 0);
     }
   }
-  NCCLCHECK(ncclGroupEnd());
+  ncclGroupEnd();
 }
 
 void AllToAllV2(IdArray send_buffer, IdArray send_offset, IdArray* recv_buffer, IdArray* host_recv_offset, int rank, int world_size, const std::string& scope) {
@@ -174,8 +174,8 @@ void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int ra
   IdArray recv_sizes = IdArray::Empty({world_size}, seeds->dtype, dgl_context);
   // IdArray recv_sizes = MemoryManager::Global()->Empty("RECV_SIZES", {world_size}, seeds->dtype, dgl_context);
   IdArray range_seq = Range(0, world_size + 1, 64, host_dgl_context);
-  
   AllToAll(send_sizes, range_seq, recv_sizes, range_seq, 1, rank, world_size, nccl_comm);
+
   IdArray host_recv_sizes = recv_sizes.CopyTo(host_dgl_context);
   *host_recv_offset = Full<int64_t>(0, world_size + 1, host_dgl_context);
   // *host_recv_offset = MemoryManager::Global()->Full<int64_t>("HOST_RECV_OFFSET", 0, world_size + 1, host_dgl_context);
