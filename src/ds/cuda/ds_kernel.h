@@ -30,6 +30,8 @@ void ConvertGidToLid(IdArray global_ids, IdArray min_vids, int rank);
 
 void ConvertLidToGid(IdArray local_ids, IdArray global_nid_map);
 
+std::tuple<IdArray, IdArray, IdArray, IdArray> Partition(IdArray seeds, IdArray min_vids, int world_size);
+
 void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_sizes, IdArray* dev_send_offset);
 
 void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int rank, int world_size, ncclComm_t nccl_comm, IdArray* frontier, IdArray* host_recv_offset);

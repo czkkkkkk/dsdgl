@@ -95,10 +95,11 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   }
   IdArray idx;
   IdArray original_seeds = seeds.Clone();
-  std::tie(seeds, idx) = Sort(seeds);
+  // std::tie(seeds, idx) = Sort(seeds);
 
   IdArray send_sizes, send_offset;
-  Cluster(seeds, min_vids, world_size, &send_sizes, &send_offset);
+  std::tie(seeds, idx, send_sizes, send_offset) = Partition(seeds, min_vids, world_size);
+  // Cluster(seeds, min_vids, world_size, &send_sizes, &send_offset);
   auto host_send_sizes = send_sizes.CopyTo(DLContext({kDLCPU, 0}));
   auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}));
 

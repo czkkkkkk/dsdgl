@@ -5,15 +5,18 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include <memory>
+#include <cmath>
 #include <iostream>
 #include "dmlc/logging.h"
 
 #include <dgl/array.h>
 #include <dgl/aten/csr.h>
+#include <dgl/runtime/device_api.h>
 
 #include "../memory_manager.h"
 #include "./alltoall.h"
 #include "../context.h"
+#include "./scan.h"
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
@@ -79,7 +82,8 @@ void _CountDeviceVerticesKernel(int device_cnt,
                                 IdType *device_vid_base,
                                 IdType num_seed, 
                                 IdType *seeds,
-                                IdType *device_col_cnt) {
+                                IdType *device_col_cnt,
+                                IdType *part_ids) {
   __shared__ IdType local_count[9];
   __shared__ IdType device_vid[9];
   IdType idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -99,6 +103,7 @@ void _CountDeviceVerticesKernel(int device_cnt,
     while (device_id + 1 < device_cnt && device_vid[device_id + 1] <= vid) {
       ++device_id;
     }
+    part_ids[idx] = device_id;
     atomicAdd((unsigned long long *)(local_count + device_id), 1);
     idx += stride;
   }
@@ -111,6 +116,24 @@ void _CountDeviceVerticesKernel(int device_cnt,
 
 }
 
+std::tuple<IdArray, IdArray, IdArray, IdArray> Partition(IdArray seeds, IdArray min_vids, int world_size) {
+  auto dgl_ctx = seeds->ctx;
+  IdArray part_sizes = Full<int64_t>(0, world_size, dgl_ctx);
+  IdArray part_ids = IdArray::Empty({seeds->shape[0]}, seeds->dtype, seeds->ctx);
+  int n_threads = 1024;
+  int n_blocks = (seeds->shape[0] + n_threads - 1) / n_threads;
+  if (n_blocks == 0) n_blocks = 1;
+  _CountDeviceVerticesKernel<<<n_blocks, n_threads>>>(world_size, min_vids.Ptr<IdType>(),
+                                                        seeds->shape[0], seeds.Ptr<IdType>(),
+                                                        part_sizes.Ptr<IdType>(), part_ids.Ptr<IdType>());
+  IdArray part_offset = CumSum(part_sizes, true);
+
+  IdArray sorted, index;
+  std::tie(sorted, index) = MultiWayScan(seeds, part_offset, part_ids, world_size);
+  return {sorted, index, part_sizes, part_offset};
+}
+
+
 void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_sizes, IdArray* send_offset) {
   int n_seeds = seeds->shape[0];
   // thrust::device_ptr<IdType> seeds_ptr(seeds.Ptr<IdType>());
@@ -118,6 +141,7 @@ void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_size
   auto dgl_ctx = seeds->ctx;
   *send_sizes = Full<int64_t>(0, world_size, dgl_ctx);
   *send_offset = Full<int64_t>(0, world_size + 1, dgl_ctx);
+  IdArray part_ids = IdArray::Empty({seeds->shape[0]}, seeds->dtype, seeds->ctx);
   // *send_sizes = MemoryManager::Global()->Full<int64_t>("SEND_SIZES", 0, world_size, dgl_ctx);
   // *send_offset = MemoryManager::Global()->Full<int64_t>("SEND_OFFSET", 0, world_size + 1, dgl_ctx);
 
@@ -125,7 +149,7 @@ void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_size
   int n_blocks = (n_seeds + n_threads - 1) / n_threads;
   _CountDeviceVerticesKernel<<<n_blocks, n_threads>>>(world_size, min_vids.Ptr<IdType>(),
                                                         n_seeds, seeds.Ptr<IdType>(),
-                                                        send_sizes->Ptr<IdType>());
+                                                        send_sizes->Ptr<IdType>(), part_ids.Ptr<IdType>());
   CUDACHECK(cudaGetLastError());
   *send_offset = CumSum(*send_sizes, true);
   // thrust::exclusive_scan(thrust::device_ptr<IdType>(send_sizes->Ptr<IdType>()), 
