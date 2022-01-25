@@ -139,13 +139,8 @@ def run(rank, args):
     for epoch in range(args.num_epochs):
         tic = time.time()
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
-            # batch_inputs = dgl.ds.load_subtensor(train_feature, input_nodes)
-            test = th.tensor([2,1,0], dtype=F.int64).to(device)
-            test_feature = th.tensor([[0,0], [1,1], [2,2], [3,3]], dtype=F.int64).to(device)
-            ret = dgl.ds.load_subtensor(test_feature, test, min_vids)
-            print(rank, ret)
+            batch_inputs = dgl.ds.load_subtensor(train_feature, input_nodes, min_vids)
             th.distributed.barrier()
-            exit()
         toc = time.time()
         if epoch >= skip_epoch:
             total += (toc - tic)
@@ -164,7 +159,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
     parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
-    parser.add_argument('--num_epochs', default=1, type=int, help='Epochs')
+    parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
     args = parser.parse_args()
 
     mp.spawn(run,
