@@ -11,6 +11,7 @@ using namespace dgl;
 using namespace dgl::aten;
 
 using IdType = int64_t;
+using DataType = float;
 
 namespace dgl {
 namespace ds {

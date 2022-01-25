@@ -95,8 +95,10 @@ def run(args, device, data):
             # print("batch:", cnt)
             cnt += 1
             # Load the input features as well as output labels
-            # batch_inputs, batch_labels = load_subtensor(train_nfeat, train_labels,
-            #                                             seeds, input_nodes, device)
+            batch_inputs, batch_labels = load_subtensor(train_nfeat, train_labels,
+                                                        seeds, input_nodes, device)
+            print(batch_inputs.shape)
+            exit()
             # blocks = [block.int().to(device) for block in blocks]
 
             # # Compute loss and prediction

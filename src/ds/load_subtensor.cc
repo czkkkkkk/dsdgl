@@ -46,18 +46,10 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
 
   IdArray send_sizes, send_offset;
   Cluster(input_nodes, min_vids, world_size, &send_sizes, &send_offset);
-  auto host_send_sizes = send_sizes.CopyTo(DLContext({kDLCPU, 0}));
   auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}));
-
-  printf("world size: %d\n", world_size);
-  for (int i=0; i<world_size; i++) {
-    printf("rank %d send to rank %d count %lu\n", rank, i, host_send_sizes.Ptr<uint64_t>()[i]);
-  }
 
   IdArray frontier, host_recv_offset;
   Shuffle(input_nodes, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset);
-
-  printf("rank: %d, frontier number: %d\n", rank, frontier->shape[0]);
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray features_to_send;
@@ -65,6 +57,7 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
 
   IdArray features_recv;
   Reshuffle(features_to_send, features->shape[1], n_input_nodes, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &features_recv);
+  features_recv = Remap(features_recv, idx, features->shape[1]);
 
   *rv = features_recv;
 });
