@@ -132,12 +132,16 @@ void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_size
   //                        thrust::device_ptr<IdType>(send_sizes->Ptr<IdType>()) + world_size + 1, send_offset->Ptr<IdType>());  
 }
 
-void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
-  IdType* send_buffer_ptr = send_buffer.Ptr<IdType>();
-  IdType* recv_buffer_ptr = recv_buffer.Ptr<IdType>();
+template <class T>
+void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
+  T* send_buffer_ptr = send_buffer.Ptr<T>();
+  T* recv_buffer_ptr = recv_buffer.Ptr<T>();
+  int type_bytes = sizeof(T);
   IdType* send_offset_ptr = send_offset.Ptr<IdType>();
   IdType* recv_offset_ptr = recv_offset.Ptr<IdType>();
-  cudaMemcpy(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, send_buffer_ptr + send_offset_ptr[rank] * expand_size, (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * sizeof(IdType), cudaMemcpyDeviceToDevice);
+  cudaMemcpy(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
+             send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
+             (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice);
   ncclGroupStart();
   for(int r = 0; r < world_size; ++r) {
     if(r != rank) {
@@ -145,11 +149,24 @@ void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdA
       IdType send_ptr = send_offset_ptr[r] * expand_size;
       IdType recv_size = (recv_offset_ptr[r+1] - recv_offset_ptr[r]) * expand_size;
       IdType recv_ptr = recv_offset_ptr[r] * expand_size;
-      ncclSend(send_buffer_ptr + send_ptr, send_size, ncclUint64, r, nccl_comm, 0);
-      ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, ncclUint64, r, nccl_comm, 0);
+      if (type_bytes == 8) {
+        ncclSend(send_buffer_ptr + send_ptr, send_size, ncclUint64, r, nccl_comm, 0);
+        ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, ncclUint64, r, nccl_comm, 0);
+      } else {
+        ncclSend(send_buffer_ptr + send_ptr, send_size, ncclUint32, r, nccl_comm, 0);
+        ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, ncclUint32, r, nccl_comm, 0);
+      }
     }
   }
   ncclGroupEnd();
+}
+
+void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
+  if (send_buffer->dtype.bits == 64) {
+    _AllToAll<IdType>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm);
+  } else {
+    _AllToAll<DataType>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm);
+  }
 }
 
 void AllToAllV2(IdArray send_buffer, IdArray send_offset, IdArray* recv_buffer, IdArray* host_recv_offset, int rank, int world_size, const std::string& scope) {
@@ -159,7 +176,6 @@ void AllToAllV2(IdArray send_buffer, IdArray send_offset, IdArray* recv_buffer, 
   IdArray recv_offset = IdArray::Empty({world_size + 1}, send_buffer->dtype, dgl_context);
   // *recv_buffer = MemoryManager::Global()->Empty(scope + "_RECV_BUFFER", {MAX_RECV_BUFFER_SIZE}, send_buffer->dtype, dgl_context);
   // IdArray recv_offset = MemoryManager::Global()->Empty(scope + "_RECV_OFFSET", {world_size + 1}, send_buffer->dtype, dgl_context);
-
   Alltoall(send_buffer.Ptr<IdType>(), send_offset.Ptr<IdType>(), recv_buffer->Ptr<IdType>(), recv_offset.Ptr<IdType>(), &ds_context->comm_info, rank, world_size);
 
   *host_recv_offset = recv_offset.CopyTo({kDLCPU, 0});
@@ -292,8 +308,9 @@ void ReshuffleV2(IdArray neighbors, int fanout, IdArray host_shuffle_recv_offset
   AllToAllV2(neighbors, shuffle_recv_offset, reshuffled_neighbors, &recv_offset, rank, world_size, "RESHUFFLEV2");
 }
 
+template <class T>
 __global__
-void _RemapKernel(IdType* dst, IdType* src, IdType* index, int size, int fanout) {
+void _RemapKernel(T* dst, T* src, IdType* index, int size, int fanout) {
   int tid = blockDim.x * blockIdx.x + threadIdx.x;
   int stride = gridDim.x * blockDim.x;
   while(tid < size * fanout) {
@@ -309,7 +326,11 @@ IdArray Remap(IdArray neighbors, IdArray index, int fanout) {
   IdArray ret = IdArray::Empty({neighbors->shape[0]}, neighbors->dtype, neighbors->ctx);
   int n_threads = 512;
   int n_blocks = std::max(1l, (neighbors->shape[0] + n_threads - 1) / n_threads);
-  _RemapKernel<<<n_blocks, n_threads>>>(ret.Ptr<IdType>(), neighbors.Ptr<IdType>(), index.Ptr<IdType>(), index->shape[0], fanout);
+  if (neighbors->dtype.bits == 64) {
+    _RemapKernel<<<n_blocks, n_threads>>>(ret.Ptr<IdType>(), neighbors.Ptr<IdType>(), index.Ptr<IdType>(), index->shape[0], fanout);
+  } else {
+    _RemapKernel<<<n_blocks, n_threads>>>(ret.Ptr<DataType>(), neighbors.Ptr<DataType>(), index.Ptr<IdType>(), index->shape[0], fanout);
+  }
   CUDACHECK(cudaGetLastError());
   return ret;
 }
@@ -363,6 +384,44 @@ void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, in
     fanout, n_frontier, frontier.Ptr<IdType>(), row_idx.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(), csr_mat.data.Ptr<IdType>(),
     edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>(), edges->Ptr<IdType>()
   );
+  CUDACHECK(cudaDeviceSynchronize());
+}
+
+template <int BLOCK_ROWS>
+__global__ void _CSRRowWiseLoadSubtensorKernel(
+    IdType dim, 
+    IdType num_frontier, 
+    IdType *frontier,
+    DataType *features,
+    DataType *features_to_send) {
+  assert(blockDim.x == WARP_SIZE);
+  IdType out_row = blockIdx.x*blockDim.y+threadIdx.y;
+  while (out_row < num_frontier) {
+    const IdType row = frontier[out_row];
+    const IdType in_row_start = row * dim;
+    const IdType out_row_start = out_row * dim;
+    for (int idx = threadIdx.x; idx < dim; idx += blockDim.x) {
+      features_to_send[out_row_start + idx] = features[in_row_start + idx];
+    }
+    out_row += gridDim.x * blockDim.y;
+  }
+}
+
+void LoadFeature(IdArray frontier, IdArray features, IdArray *features_to_send) {
+  auto dgl_ctx = features->ctx;
+  int n_frontier = frontier->shape[0], dim = features->shape[1];
+  *features_to_send = IdArray::Empty({n_frontier * dim}, features->dtype, dgl_ctx);
+  constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
+  const dim3 block(WARP_SIZE, BLOCK_ROWS);
+  const dim3 grid((n_frontier + block.y - 1) / block.y);
+  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaGetLastError());
+  if (grid.x > 0) {
+    _CSRRowWiseLoadSubtensorKernel<BLOCK_ROWS><<<grid, block>>>(
+      dim, n_frontier, frontier.Ptr<IdType>(), features.Ptr<DataType>(), features_to_send->Ptr<DataType>()
+    );
+    CUDACHECK(cudaGetLastError());
+  }
   CUDACHECK(cudaDeviceSynchronize());
 }
 

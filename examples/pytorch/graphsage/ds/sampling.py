@@ -1,4 +1,3 @@
-
 import os
 
 from dgl.random import seed
@@ -19,7 +18,7 @@ import time
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
+    os.environ['MASTER_PORT'] = '12475'
 
     # initialize the process group
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
@@ -60,27 +59,7 @@ class NeighborSampler(object):
             blocks.insert(0, block)
         return blocks
 
-def test_sampling(num_vertices, g, rank):
-    device = th.device('cuda:%d' % rank)
-    if rank == 0:
-        seeds = th.LongTensor([141625, 141734]).to(device)
-    else:
-        seeds = th.LongTensor([1, 2]).to(device)
-    g = g.to(device)
-    min_vids = th.LongTensor([0, 116366]).to(device)
-    min_eids = th.LongTensor([0, 116366]).to(device)
-    #print(seeds)
-    frontier = ds.sample_neighbors(g, num_vertices, min_vids, min_eids, seeds, 2, g.ndata[dgl.NID], is_local=False)
-    # try:
-    block = dgl.to_block(frontier, seeds)
-    seeds = block.srcdata[dgl.NID]
-    # except:
-    #     print(seeds)
-    #     exit()
-    #print(seeds)
-
-
-def run(rank, args):
+def run(rank, args, train_label):
     print('Start rank', rank, 'with args:', args)
     th.cuda.set_device(rank)
     setup(rank, args.n_ranks)
@@ -93,28 +72,32 @@ def run(rank, args):
     #time.sleep(2)
     #exit(0)
     g = dgl.add_self_loop(g)
-
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
-
     print('rank {}, # global: {}, # local: {}'.format(rank, num_vertices, n_local_nodes))
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
     train_nid = dgl.ds.rebalance_train_nids(train_nid, args.batch_size, g.ndata[dgl.NID])
 
     # print('# batch: ', train_nid.size()[0] / args.batch_size)
+    th.distributed.barrier()
     #tansfer graph and train nodes to gpu
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
     train_g = g.formats(['csr'])
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
     train_g = train_g.to(device)
+    train_feature = node_feats['_N/features']
+    train_feature = train_feature.to(device)
+    train_label = train_label.to(device)
     global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu
     min_vids = [0] + list(gpb._max_node_ids)
+    min_vids = F.tensor(min_vids, dtype=F.int64).to(device)
     min_eids = [0] + list(gpb._max_edge_ids)
+    min_eids = F.tensor(min_eids, dtype=F.int64).to(device)
     time.sleep(2)
     sampler = NeighborSampler(train_g, num_vertices,
-                              F.tensor(min_vids, dtype=F.int64).to(device),
-                              F.tensor(min_eids, dtype=F.int64).to(device),
+                              min_vids,
+                              min_eids,
                               global_nid_map,
                               [int(fanout) for fanout in args.fan_out.split(',')],
                               dgl.ds.sample_neighbors, device)
@@ -128,15 +111,20 @@ def run(rank, args):
         shuffle=False,
         drop_last=False,
         num_workers=0)
-
+    
+    th.cuda.synchronize()
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
     skip_epoch = 5
+    print("start sampling")
     for epoch in range(args.num_epochs):
         tic = time.time()
-        for step, blocks in enumerate(dataloader):
-            pass
+        for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
+            print("start loading")
+            batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, min_vids)
+            th.cuda.synchronize()
+            th.distributed.barrier()
         toc = time.time()
         if epoch >= skip_epoch:
             total += (toc - tic)
@@ -157,9 +145,15 @@ if __name__ == '__main__':
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
     args = parser.parse_args()
+    
+    all_labels = th.tensor([])
+    for rank in range(args.n_ranks):
+        _, node_feats, _, _, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
+        train_label = node_feats['_N/labels']
+        all_labels = th.cat((all_labels, train_label), dim=0)
 
     mp.spawn(run,
-          args=(args,),
+          args=(args, all_labels),
           nprocs=args.n_ranks,
           join=True)
   
