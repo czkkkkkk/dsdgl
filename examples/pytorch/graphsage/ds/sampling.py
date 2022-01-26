@@ -59,26 +59,6 @@ class NeighborSampler(object):
             blocks.insert(0, block)
         return blocks
 
-def test_sampling(num_vertices, g, rank):
-    device = th.device('cuda:%d' % rank)
-    if rank == 0:
-        seeds = th.LongTensor([141625, 141734]).to(device)
-    else:
-        seeds = th.LongTensor([1, 2]).to(device)
-    g = g.to(device)
-    min_vids = th.LongTensor([0, 116366]).to(device)
-    min_eids = th.LongTensor([0, 116366]).to(device)
-    #print(seeds)
-    frontier = ds.sample_neighbors(g, num_vertices, min_vids, min_eids, seeds, 2, g.ndata[dgl.NID], is_local=False)
-    # try:
-    block = dgl.to_block(frontier, seeds)
-    seeds = block.srcdata[dgl.NID]
-    # except:
-    #     print(seeds)
-    #     exit()
-    #print(seeds)
-
-
 def run(rank, args, train_label):
     print('Start rank', rank, 'with args:', args)
     th.cuda.set_device(rank)
@@ -111,11 +91,13 @@ def run(rank, args, train_label):
     global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu
     min_vids = [0] + list(gpb._max_node_ids)
+    min_vids = F.tensor(min_vids, dtype=F.int64).to(device)
     min_eids = [0] + list(gpb._max_edge_ids)
+    min_eids = F.tensor(min_eids, dtype=F.int64).to(device)
     time.sleep(2)
     sampler = NeighborSampler(train_g, num_vertices,
-                              F.tensor(min_vids, dtype=F.int64).to(device),
-                              F.tensor(min_eids, dtype=F.int64).to(device),
+                              min_vids,
+                              min_eids,
                               global_nid_map,
                               [int(fanout) for fanout in args.fan_out.split(',')],
                               dgl.ds.sample_neighbors, device)
@@ -129,19 +111,19 @@ def run(rank, args, train_label):
         shuffle=False,
         drop_last=False,
         num_workers=0)
-
+    
     th.cuda.synchronize()
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
     skip_epoch = 5
-    min_vids = F.tensor(min_vids, dtype=F.int64).to(device)
+    print("start sampling")
     for epoch in range(args.num_epochs):
         tic = time.time()
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
+            print("start loading")
             batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, min_vids)
             th.cuda.synchronize()
-            # print(batch_inputs.shape, batch_labels.shape)
             th.distributed.barrier()
         toc = time.time()
         if epoch >= skip_epoch:
