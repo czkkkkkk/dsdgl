@@ -44,7 +44,8 @@ class NeighborSampler(object):
     '''
     def sample_blocks(self, g, seeds, exclude_eids=None):
         blocks = []
-        is_local = False 
+        is_local = False
+        print("start sampling blocks")
         for fanout in self.fanouts:
             # For each seed node, sample ``fanout`` neighbors.
             frontier = self.sample_neighbors(self.g, self.num_vertices,
@@ -57,6 +58,7 @@ class NeighborSampler(object):
             # Obtain the seed nodes for next layer.
             seeds = block.srcdata[dgl.NID]
             blocks.insert(0, block)
+        print("finish sampling blocks")
         return blocks
 
 def run(rank, args, train_label):
