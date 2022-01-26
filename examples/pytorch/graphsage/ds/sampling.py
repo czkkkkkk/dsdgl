@@ -80,7 +80,7 @@ def test_sampling(num_vertices, g, rank):
     #print(seeds)
 
 
-def run(rank, args):
+def run(rank, args, train_label):
     print('Start rank', rank, 'with args:', args)
     th.cuda.set_device(rank)
     setup(rank, args.n_ranks)
@@ -107,7 +107,6 @@ def run(rank, args):
     train_g = train_g.to(device)
     train_feature = node_feats['_N/features']
     train_feature = train_feature.to(device)
-    train_label = node_feats['_N/labels']
     train_label = train_label.to(device)
     global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu
@@ -131,6 +130,7 @@ def run(rank, args):
         drop_last=False,
         num_workers=0)
 
+    th.cuda.synchronize()
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
@@ -139,7 +139,8 @@ def run(rank, args):
     for epoch in range(args.num_epochs):
         tic = time.time()
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
-            batch_inputs = dgl.ds.load_subtensor(train_feature, input_nodes, min_vids)
+            batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, min_vids)
+            # print(batch_inputs.shape, batch_labels.shape)
             th.distributed.barrier()
         toc = time.time()
         if epoch >= skip_epoch:
@@ -157,13 +158,19 @@ if __name__ == '__main__':
     parser.add_argument('--graph_name', default='test', type=str, help='graph name')
     parser.add_argument('--part_config', default='./data-2/reddit.json', type=str, help='The path to the partition config file')
     parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
-    parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
+    parser.add_argument('--batch_size', default=2048, type=int, help='Batch size')
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
     args = parser.parse_args()
+    
+    all_labels = th.tensor([])
+    for rank in range(args.n_ranks):
+        _, node_feats, _, _, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
+        train_label = node_feats['_N/labels']
+        all_labels = th.cat((all_labels, train_label), dim=0)
 
     mp.spawn(run,
-          args=(args,),
+          args=(args, all_labels),
           nprocs=args.n_ranks,
           join=True)
   
