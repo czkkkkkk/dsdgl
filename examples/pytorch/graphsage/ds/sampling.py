@@ -1,4 +1,3 @@
-
 import os
 
 from dgl.random import seed
@@ -99,6 +98,7 @@ def run(rank, args, train_label):
     train_nid = dgl.ds.rebalance_train_nids(train_nid, args.batch_size, g.ndata[dgl.NID])
 
     # print('# batch: ', train_nid.size()[0] / args.batch_size)
+    th.distributed.barrier()
     #tansfer graph and train nodes to gpu
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
@@ -140,6 +140,7 @@ def run(rank, args, train_label):
         tic = time.time()
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
             batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, min_vids)
+            th.cuda.synchronize()
             # print(batch_inputs.shape, batch_labels.shape)
             th.distributed.barrier()
         toc = time.time()
@@ -156,9 +157,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='GCN')
     register_data_args(parser)
     parser.add_argument('--graph_name', default='test', type=str, help='graph name')
-    parser.add_argument('--part_config', default='./data-2/reddit.json', type=str, help='The path to the partition config file')
-    parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
-    parser.add_argument('--batch_size', default=2048, type=int, help='Batch size')
+    parser.add_argument('--part_config', default='./data-8/reddit.json', type=str, help='The path to the partition config file')
+    parser.add_argument('--n_ranks', default=8, type=int, help='Number of ranks')
+    parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
     args = parser.parse_args()
