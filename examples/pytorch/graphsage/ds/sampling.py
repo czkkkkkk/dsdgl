@@ -14,11 +14,12 @@ import time
 import dgl.ds as ds
 import dgl.backend as F
 import time
+import random
 #from dgl.ds.graph_partition_book import *
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12475'
+    os.environ['MASTER_PORT'] = '12377'
 
     # initialize the process group
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
@@ -45,7 +46,6 @@ class NeighborSampler(object):
     def sample_blocks(self, g, seeds, exclude_eids=None):
         blocks = []
         is_local = False
-        print("start sampling blocks")
         for fanout in self.fanouts:
             # For each seed node, sample ``fanout`` neighbors.
             frontier = self.sample_neighbors(self.g, self.num_vertices,
@@ -58,7 +58,6 @@ class NeighborSampler(object):
             # Obtain the seed nodes for next layer.
             seeds = block.srcdata[dgl.NID]
             blocks.insert(0, block)
-        print("finish sampling blocks")
         return blocks
 
 def run(rank, args, train_label):
@@ -78,7 +77,6 @@ def run(rank, args, train_label):
     print('rank {}, # global: {}, # local: {}'.format(rank, num_vertices, n_local_nodes))
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
     train_nid = dgl.ds.rebalance_train_nids(train_nid, args.batch_size, g.ndata[dgl.NID])
-
     # print('# batch: ', train_nid.size()[0] / args.batch_size)
     th.distributed.barrier()
     #tansfer graph and train nodes to gpu
@@ -96,7 +94,7 @@ def run(rank, args, train_label):
     min_vids = F.tensor(min_vids, dtype=F.int64).to(device)
     min_eids = [0] + list(gpb._max_edge_ids)
     min_eids = F.tensor(min_eids, dtype=F.int64).to(device)
-    time.sleep(2)
+    time.sleep(5)
     sampler = NeighborSampler(train_g, num_vertices,
                               min_vids,
                               min_eids,
@@ -114,7 +112,6 @@ def run(rank, args, train_label):
         drop_last=False,
         num_workers=0)
     
-    th.cuda.synchronize()
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
@@ -123,9 +120,10 @@ def run(rank, args, train_label):
     for epoch in range(args.num_epochs):
         tic = time.time()
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
+            th.cuda.synchronize()
             print("start loading")
             batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, min_vids)
-            th.cuda.synchronize()
+            print(batch_inputs.shape, batch_labels.shape)
             th.distributed.barrier()
         toc = time.time()
         if epoch >= skip_epoch:
@@ -145,7 +143,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_ranks', default=8, type=int, help='Number of ranks')
     parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
-    parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
+    parser.add_argument('--num_epochs', default=10, type=int, help='Epochs')
     args = parser.parse_args()
     
     all_labels = th.tensor([])
