@@ -97,24 +97,22 @@ def run(args, device, data):
             # Load the input features as well as output labels
             batch_inputs, batch_labels = load_subtensor(train_nfeat, train_labels,
                                                         seeds, input_nodes, device)
-            print(batch_inputs.shape)
-            exit()
-            # blocks = [block.int().to(device) for block in blocks]
+            blocks = [block.int().to(device) for block in blocks]
 
-            # # Compute loss and prediction
-            # batch_pred = model(blocks, batch_inputs)
-            # loss = loss_fcn(batch_pred, batch_labels)
-            # optimizer.zero_grad()
-            # loss.backward()
-            # optimizer.step()
+            # Compute loss and prediction
+            batch_pred = model(blocks, batch_inputs)
+            loss = loss_fcn(batch_pred, batch_labels)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-            # iter_tput.append(len(seeds) / (time.time() - tic_step))
-            # if step % args.log_every == 0:
-            #     acc = compute_acc(batch_pred, batch_labels)
-            #     gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
-            #     print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
-            #         epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
-            # tic_step = time.time()
+            iter_tput.append(len(seeds) / (time.time() - tic_step))
+            if step % args.log_every == 0:
+                acc = compute_acc(batch_pred, batch_labels)
+                gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
+                print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
+                    epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
+            tic_step = time.time()
 
         toc = time.time()
         print('time cost:', toc - tic)
@@ -187,5 +185,6 @@ if __name__ == '__main__':
     # Pack data
     data = n_classes, train_g, val_g, test_g, train_nfeat, train_labels, \
            val_nfeat, val_labels, test_nfeat, test_labels
+    print('# nodes:', train_g.number_of_nodes(), '# edges:', train_g.number_of_edges())
 
     run(args, device, data)

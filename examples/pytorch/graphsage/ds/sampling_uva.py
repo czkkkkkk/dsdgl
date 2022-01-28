@@ -16,7 +16,7 @@ import dgl.ds as ds
 import dgl.backend as F
 import time
 import torch
-from load_graph import load_reddit, inductive_split
+from load_graph import load_reddit, load_ogb, inductive_split
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -103,6 +103,7 @@ def run(rank, args, data):
         cnt = 0
         for step, blocks in enumerate(dataloader):
             cnt += 1
+            th.cuda.synchronize()
             th.distributed.barrier()
             if cnt == stop_epoch:
                 break
@@ -125,7 +126,11 @@ if __name__ == '__main__':
   parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
   args = parser.parse_args()
 
-  g, n_classes = load_reddit()
+  if args.dataset == 'reddit':
+    g, n_classes = load_reddit()
+  else:
+    g, n_classes = load_ogb('ogbn-products')
+  g = dgl.add_self_loop(g)
   g = dgl.as_heterograph(g)
   train_g = g
   train_g.create_formats_()
