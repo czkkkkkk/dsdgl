@@ -83,6 +83,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   int n_seeds = seeds->shape[0];
   int rank = context->rank;
   int world_size = context->world_size;
+  CUDACHECK(cudaSetDevice(rank));
 
   const DLContext& dgl_context = seeds->ctx;
   auto device = runtime::DeviceAPI::Get(dgl_context);
@@ -110,11 +111,12 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   } else {
     ShuffleV2(seeds, send_offset, rank, world_size, &frontier, &host_recv_offset);
   }
+  CUDACHECK(cudaGetLastError());
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray neighbors, edges;
   Sample(frontier, hg.sptr(), fanout, replace, &neighbors, &edges);
-
+  CUDACHECK(cudaGetLastError());
   // ConvertLidToGid(neighbors, global_nid_map);
   
   IdArray reshuffled_neighbors;
@@ -123,7 +125,10 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   } else {
     ReshuffleV2(neighbors, fanout, host_recv_offset, rank, world_size, &reshuffled_neighbors);
   }
+  CUDACHECK(cudaGetLastError());
+
   reshuffled_neighbors = Remap(reshuffled_neighbors, idx, fanout);
+  CUDACHECK(cudaGetLastError());
 
   // LOG(INFO) << "Reshuffled neibhgors: " << ToDebugString(reshuffled_neighbors);
   

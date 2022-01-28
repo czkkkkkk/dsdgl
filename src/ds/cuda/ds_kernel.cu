@@ -156,16 +156,16 @@ void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_size
   //                        thrust::device_ptr<IdType>(send_sizes->Ptr<IdType>()) + world_size + 1, send_offset->Ptr<IdType>());  
 }
 
-template <class T>
+template <typename T, ncclDataType_t NCCL_DATA_TYPE>
 void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
   T* send_buffer_ptr = send_buffer.Ptr<T>();
   T* recv_buffer_ptr = recv_buffer.Ptr<T>();
   int type_bytes = sizeof(T);
   IdType* send_offset_ptr = send_offset.Ptr<IdType>();
   IdType* recv_offset_ptr = recv_offset.Ptr<IdType>();
-  cudaMemcpy(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
-             send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
-             (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice);
+  CUDACHECK(cudaMemcpy(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
+                       send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
+                       (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice));
   ncclGroupStart();
   for(int r = 0; r < world_size; ++r) {
     if(r != rank) {
@@ -173,23 +173,19 @@ void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, Id
       IdType send_ptr = send_offset_ptr[r] * expand_size;
       IdType recv_size = (recv_offset_ptr[r+1] - recv_offset_ptr[r]) * expand_size;
       IdType recv_ptr = recv_offset_ptr[r] * expand_size;
-      if (type_bytes == 8) {
-        ncclSend(send_buffer_ptr + send_ptr, send_size, ncclUint64, r, nccl_comm, 0);
-        ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, ncclUint64, r, nccl_comm, 0);
-      } else {
-        ncclSend(send_buffer_ptr + send_ptr, send_size, ncclUint32, r, nccl_comm, 0);
-        ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, ncclUint32, r, nccl_comm, 0);
-      }
+      ncclSend(send_buffer_ptr + send_ptr, send_size, NCCL_DATA_TYPE, r, nccl_comm, 0);
+      ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, NCCL_DATA_TYPE, r, nccl_comm, 0);
     }
   }
   ncclGroupEnd();
+  CUDACHECK(cudaDeviceSynchronize());
 }
 
 void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
   if (send_buffer->dtype.bits == 64) {
-    _AllToAll<IdType>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm);
+    _AllToAll<IdType, ncclUint64>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm);
   } else {
-    _AllToAll<DataType>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm);
+    _AllToAll<DataType, ncclUint32>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm);
   }
 }
 
@@ -438,8 +434,6 @@ void LoadFeature(IdArray frontier, IdArray features, IdArray *features_to_send) 
   constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
   const dim3 block(WARP_SIZE, BLOCK_ROWS);
   const dim3 grid((n_frontier + block.y - 1) / block.y);
-  CUDACHECK(cudaDeviceSynchronize());
-  CUDACHECK(cudaGetLastError());
   if (grid.x > 0) {
     _CSRRowWiseLoadSubtensorKernel<BLOCK_ROWS><<<grid, block>>>(
       dim, n_frontier, frontier.Ptr<IdType>(), features.Ptr<DataType>(), features_to_send->Ptr<DataType>()
