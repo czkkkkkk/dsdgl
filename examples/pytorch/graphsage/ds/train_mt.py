@@ -18,6 +18,9 @@ import dgl.backend as F
 import time
 import random
 from model import SAGE
+import threading
+from threading import Thread
+from queue import Queue
 #from dgl.ds.graph_partition_book import *
 
 def setup(rank, world_size):
@@ -62,6 +65,67 @@ class NeighborSampler(object):
             seeds = block.srcdata[dgl.NID]
             blocks.insert(0, block)
         return blocks
+
+class PCQueue(object):
+  def __init__(self, capacity):
+    self.capacity = threading.Semaphore(capacity)
+    self.product = threading.Semaphore(0)
+    self.buffer = Queue()
+  
+  def get(self):
+    self.product.acquire()
+    item = self.buffer.get()
+    self.capacity.release()
+    return item
+  
+  def put(self, item):
+    self.capacity.acquire()
+    self.buffer.put(item)
+    self.product.release()
+  
+  def stop_produce(self, num):
+    for i in range(num):
+      self.put(None)
+
+class Sampler(Thread):
+  def __init__(self, dataloader, features, labels, min_vids, pc_queue):
+    Thread.__init__(self)
+    self.dataloader = dataloader
+    self.features = features
+    self.labels = labels
+    self.min_vids = min_vids
+    self.pc_queue = pc_queue
+  
+  def run(self):
+    for step, (input_nodes, seeds, blocks) in enumerate(self.dataloader):
+      th.cuda.synchronize()
+      batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
+      th.cuda.synchronize()
+      self.pc_queue.put((batch_inputs, batch_labels, blocks))
+
+class Trainer(Thread):
+  def __init__(self, model, loss_fcn, optimizer, pc_queue):
+    Thread.__init__(self)
+    self.model = model
+    self.loss_fcn = loss_fcn
+    self.optimizer = optimizer
+    self.pc_queue = pc_queue
+
+  def run(self):
+    while True:
+      batch_data = self.pc_queue.get()
+      if batch_data is None:
+        return
+      batch_inputs = batch_data[0]
+      batch_labels = batch_data[1]
+      blocks = batch_data[2]
+      batch_pred = self.model(blocks, batch_inputs)
+      loss = self.loss_fcn(batch_pred, batch_labels)
+      self.optimizer.zero_grad()
+      loss.backward()
+      self.optimizer.step()
+      th.cuda.synchronize()
+      th.distributed.barrier()
 
 def run(rank, args, train_label):
     print('Start rank', rank, 'with args:', args)
@@ -136,43 +200,19 @@ def run(rank, args, train_label):
     total = 0
     skip_epoch = 5
     print("start sampling")
+    data_buffer = PCQueue(5)
     for epoch in range(args.num_epochs):
-        sampling_time = 0
-        loading_time = 0
-        training_time = 0
-
         tic = time.time()
-        start_ts = time.time()
-        for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
-            th.cuda.synchronize()
-
-            batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, min_vids)
-            print(batch_inputs.shape, batch_labels.shape)
-
-            after_sampling_ts = time.time()
-            sampling_time += after_sampling_ts - start_ts
-            # print("start loading")
-            batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, seeds, min_vids)
-
-            th.cuda.synchronize()
-            after_loading_ts = time.time()
-            loading_time += after_loading_ts - after_sampling_ts
-
-            batch_pred = model(blocks, batch_inputs)
-            loss = loss_fcn(batch_pred, batch_labels)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            th.cuda.synchronize()
-            th.distributed.barrier()
-            start_ts = time.time()
-            training_time += start_ts - after_loading_ts
-            
+        sample_worker = Sampler(dataloader, train_feature, train_label, min_vids, data_buffer)
+        train_worker = Trainer(model, loss_fcn, optimizer, data_buffer)
+        sample_worker.start()
+        train_worker.start()
+        sample_worker.join()
+        data_buffer.stop_produce(1)
+        train_worker.join()
         toc = time.time()
-        print('Rank: ', rank, 'epoch time', toc - tic, 'sampling time', sampling_time, 'loading time:', loading_time, 'training time:', training_time)
         if epoch >= skip_epoch:
             total += (toc - tic)
-
         print("rank:", rank, toc - tic)
     print("rank:", rank, "sampling time:", total/(args.num_epochs - skip_epoch))
     cleanup()

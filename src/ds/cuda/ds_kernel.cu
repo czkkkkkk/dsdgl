@@ -178,7 +178,7 @@ void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, Id
     }
   }
   ncclGroupEnd();
-  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaStreamSynchronize(0));
 }
 
 void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
@@ -404,7 +404,7 @@ void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, in
     fanout, n_frontier, frontier.Ptr<IdType>(), row_idx.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(), csr_mat.data.Ptr<IdType>(),
     edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>(), edges->Ptr<IdType>()
   );
-  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaStreamSynchronize(0));
 }
 
 template <int BLOCK_ROWS>
@@ -440,7 +440,7 @@ void LoadFeature(IdArray frontier, IdArray features, IdArray *features_to_send) 
     );
     CUDACHECK(cudaGetLastError());
   }
-  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaStreamSynchronize(0));
 }
 
 }

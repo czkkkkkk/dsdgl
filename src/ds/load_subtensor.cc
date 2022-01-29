@@ -65,6 +65,7 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   features_recv = Remap(features_recv, idx, features->shape[1]);
   CUDACHECK(cudaGetLastError());
 
+  CUDACHECK(cudaDeviceSynchronize());
   *rv = features_recv;
 });
 

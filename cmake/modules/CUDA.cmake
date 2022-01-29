@@ -265,8 +265,11 @@ macro(dgl_config_cuda out_variable)
   list(APPEND CUDA_NVCC_FLAGS ${NVCC_FLAGS_ARCH})
 
   # 2. flags in third_party/moderngpu
-  list(APPEND CUDA_NVCC_FLAGS "--expt-extended-lambda;-Wno-deprecated-declarations")
+  list(APPEND CUDA_NVCC_FLAGS "--expt-extended-lambda;-Wno-deprecated-declarations;-default-stream per-thread")
+  # list(APPEND CUDA_NVCC_FLAGS "--expt-extended-lambda;-Wno-deprecated-declarations")
 
+  # add thread local default stream
+  # list(APPEN CUDA_NVCC_FLAGS "--default-stream per-thread")
 
   # 3. CUDA 11 requires c++14 by default
   include(CheckCXXCompilerFlag)

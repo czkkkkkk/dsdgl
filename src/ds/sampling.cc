@@ -13,6 +13,7 @@
 #include "cuda/ds_kernel.h"
 #include "cuda/cuda_utils.h"
 #include "./memory_manager.h"
+#include <Python.h>
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
@@ -134,7 +135,8 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   
   // ConvertGidToLid(seeds, min_vids, rank);
   HeteroGraphPtr subg = CreateCOO(num_vertices, original_seeds, fanout, reshuffled_neighbors);
-
+  CUDACHECK(cudaDeviceSynchronize());
+  
   MemoryManager::Global()->ClearUseCount();
   *rv = HeteroGraphRef(subg);
 });
