@@ -119,7 +119,7 @@ def run(rank, args, data):
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='GCN')
   register_data_args(parser)
-  parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
+  parser.add_argument('--n_ranks', default=8, type=int, help='Number of ranks')
   parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
   parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
   parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')

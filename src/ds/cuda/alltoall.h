@@ -14,7 +14,7 @@ struct AlltoallArgs {
   void *recvbuff, *recv_offset;
 };
 
-void Alltoall(void* sendbuff, void* send_offset, void* recvbuff, void* recv_offset, CommInfo *comm_info, int rank, int world_size);
+void Alltoall(void* sendbuff, void* send_offset, void* recvbuff, void* recv_offset, CommInfo *comm_info, int rank, int world_size, int type_bytes=8);
 
 }
 }

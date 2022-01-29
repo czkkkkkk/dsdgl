@@ -60,7 +60,12 @@ class NeighborSampler(object):
             blocks.insert(0, block)
         return blocks
 
-def run(rank, args, train_label):
+def load_subtensor_cpu(train_feature, train_label, input_nodes, seeds, device):
+    batch_inputs = train_feature[input_nodes].to(device)
+    batch_labels = train_label[seeds].to(device)
+    return batch_inputs, batch_labels
+
+def run(rank, args, train_label, all_features):
     print('Start rank', rank, 'with args:', args)
     th.cuda.set_device(rank)
     setup(rank, args.n_ranks)
@@ -121,10 +126,18 @@ def run(rank, args, train_label):
         tic = time.time()
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
             th.cuda.synchronize()
+            print(input_nodes.shape, seeds.shape)
             print("start loading")
             batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, min_vids)
+            #batch_inputs, batch_labels = load_subtensor_cpu(all_features, train_label, input_nodes, seeds, device)
+            # test_features = th.tensor([[0.0,0.0], [0.1,0.1], [0.2,0.2], [0.3,0.3], [0.4,0.4]], dtype=th.float32).to(device)
+            # test_idx = th.tensor([2,0,1], dtype=th.int64).to(device)
+            # min_vids = F.tensor(th.tensor([0, 2, 6]), dtype=F.int64).to(device)
+            # batch_inputs, batch_labels = dgl.ds.load_subtensor(test_features, train_label, test_idx, min_vids)
+            th.cuda.synchronize()
             print(batch_inputs.shape, batch_labels.shape)
             th.distributed.barrier()
+            # exit()
         toc = time.time()
         if epoch >= skip_epoch:
             total += (toc - tic)
@@ -139,21 +152,24 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='GCN')
     register_data_args(parser)
     parser.add_argument('--graph_name', default='test', type=str, help='graph name')
-    parser.add_argument('--part_config', default='./data-8/reddit.json', type=str, help='The path to the partition config file')
-    parser.add_argument('--n_ranks', default=8, type=int, help='Number of ranks')
-    parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
+    parser.add_argument('--part_config', default='./data-2/reddit.json', type=str, help='The path to the partition config file')
+    parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
+    parser.add_argument('--batch_size', default=100, type=int, help='Batch size')
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=10, type=int, help='Epochs')
     args = parser.parse_args()
     
     all_labels = th.tensor([])
+    all_features = th.tensor([])
     for rank in range(args.n_ranks):
         _, node_feats, _, _, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
         train_label = node_feats['_N/labels']
+        train_feature = node_feats['_N/features']
         all_labels = th.cat((all_labels, train_label), dim=0)
+        #all_features = th.cat((all_features, train_feature), dim=0)
 
     mp.spawn(run,
-          args=(args, all_labels),
+          args=(args, all_labels, all_features),
           nprocs=args.n_ranks,
           join=True)
   

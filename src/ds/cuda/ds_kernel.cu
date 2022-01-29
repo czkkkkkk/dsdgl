@@ -39,7 +39,7 @@ using namespace dgl::aten;
 namespace dgl {
 namespace ds {
 
-static constexpr int MAX_RECV_BUFFER_SIZE = 8 * 1000 * 250 * 10;
+static constexpr int MAX_RECV_BUFFER_SIZE = 2 * 1024 * 25 * 10 * 602;
 
 __global__
 void _GidToLidKernel(IdType* global_ids, size_t size, IdType* min_vids, int rank) {
@@ -169,11 +169,12 @@ void AllToAllV2(IdArray send_buffer, IdArray send_offset, IdArray* recv_buffer, 
   auto* ds_context = DSContext::Global();
   auto dgl_context = send_buffer->ctx;
   *recv_buffer = IdArray::Empty({MAX_RECV_BUFFER_SIZE}, send_buffer->dtype, dgl_context);
-  IdArray recv_offset = IdArray::Empty({world_size + 1}, send_buffer->dtype, dgl_context);
+  IdArray recv_offset = IdArray::Empty({world_size + 1}, send_offset->dtype, dgl_context);
   // *recv_buffer = MemoryManager::Global()->Empty(scope + "_RECV_BUFFER", {MAX_RECV_BUFFER_SIZE}, send_buffer->dtype, dgl_context);
   // IdArray recv_offset = MemoryManager::Global()->Empty(scope + "_RECV_OFFSET", {world_size + 1}, send_buffer->dtype, dgl_context);
-  Alltoall(send_buffer.Ptr<IdType>(), send_offset.Ptr<IdType>(), recv_buffer->Ptr<IdType>(), recv_offset.Ptr<IdType>(), &ds_context->comm_info, rank, world_size);
-
+  Alltoall(send_buffer.Ptr<IdType>(), send_offset.Ptr<IdType>(), recv_buffer->Ptr<IdType>(), recv_offset.Ptr<IdType>(), 
+                    &ds_context->comm_info, rank, world_size, send_buffer->dtype.bits/8);
+  CUDACHECK(cudaDeviceSynchronize());
   *host_recv_offset = recv_offset.CopyTo({kDLCPU, 0});
   IdType* host_recv_offset_ptr = host_recv_offset->Ptr<IdType>();
   CHECK_LE(host_recv_offset_ptr[world_size], MAX_RECV_BUFFER_SIZE);
@@ -288,7 +289,7 @@ void SampleNeighborsV2(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray*
 
 void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_send_offset, IdArray host_shuffle_recv_offset, int rank, int world_size, ncclComm_t nccl_comm, IdArray* reshuffled_neighbors) {
   int shuffle_send_size = host_shuffle_send_offset.Ptr<IdType>()[world_size];
-  *reshuffled_neighbors = IdArray::Empty({shuffle_send_size * fanout}, neighbors->dtype, neighbors->ctx);
+  *reshuffled_neighbors = IdArray::Empty({n_seeds * fanout}, neighbors->dtype, neighbors->ctx);
   // *reshuffled_neighbors = MemoryManager::Global()->Empty("RESHUFFLED_NEIGHBORS", {shuffle_send_size * fanout}, neighbors->dtype, neighbors->ctx);
   AllToAll(neighbors, host_shuffle_recv_offset, *reshuffled_neighbors, host_shuffle_send_offset, fanout, rank, world_size, nccl_comm);
 }
@@ -397,7 +398,7 @@ __global__ void _CSRRowWiseLoadSubtensorKernel(
     const IdType in_row_start = row * dim;
     const IdType out_row_start = out_row * dim;
     for (int idx = threadIdx.x; idx < dim; idx += blockDim.x) {
-      features_to_send[out_row_start + idx] = features[in_row_start + idx];
+      features_to_send[out_row_start + idx] = 0;//features[in_row_start + idx];
     }
     out_row += gridDim.x * blockDim.y;
   }
@@ -410,6 +411,8 @@ void LoadFeature(IdArray frontier, IdArray features, IdArray *features_to_send) 
   constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
   const dim3 block(WARP_SIZE, BLOCK_ROWS);
   const dim3 grid((n_frontier + block.y - 1) / block.y);
+  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaGetLastError());
   if (grid.x > 0) {
     _CSRRowWiseLoadSubtensorKernel<BLOCK_ROWS><<<grid, block>>>(
       dim, n_frontier, frontier.Ptr<IdType>(), features.Ptr<DataType>(), features_to_send->Ptr<DataType>()
