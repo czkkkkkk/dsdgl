@@ -88,8 +88,9 @@ class PCQueue(object):
       self.put(None)
 
 class Sampler(Thread):
-  def __init__(self, dataloader, features, labels, min_vids, pc_queue):
+  def __init__(self, dataloader, features, labels, min_vids, pc_queue, rank):
     Thread.__init__(self)
+    self.rank = rank
     self.dataloader = dataloader
     self.features = features
     self.labels = labels
@@ -97,21 +98,22 @@ class Sampler(Thread):
     self.pc_queue = pc_queue
   
   def run(self):
+    th.cuda.set_device(self.rank)
     for step, (input_nodes, seeds, blocks) in enumerate(self.dataloader):
-      th.cuda.synchronize()
       batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
-      th.cuda.synchronize()
       self.pc_queue.put((batch_inputs, batch_labels, blocks))
 
 class Trainer(Thread):
-  def __init__(self, model, loss_fcn, optimizer, pc_queue):
+  def __init__(self, model, loss_fcn, optimizer, pc_queue, rank):
     Thread.__init__(self)
+    self.rank = rank
     self.model = model
     self.loss_fcn = loss_fcn
     self.optimizer = optimizer
     self.pc_queue = pc_queue
 
   def run(self):
+    th.cuda.set_device(self.rank)
     while True:
       batch_data = self.pc_queue.get()
       if batch_data is None:
@@ -200,11 +202,11 @@ def run(rank, args, train_label):
     total = 0
     skip_epoch = 5
     print("start sampling")
-    data_buffer = PCQueue(5)
+    data_buffer = PCQueue(3)
     for epoch in range(args.num_epochs):
         tic = time.time()
-        sample_worker = Sampler(dataloader, train_feature, train_label, min_vids, data_buffer)
-        train_worker = Trainer(model, loss_fcn, optimizer, data_buffer)
+        sample_worker = Sampler(dataloader, train_feature, train_label, min_vids, data_buffer, rank)
+        train_worker = Trainer(model, loss_fcn, optimizer, data_buffer, rank)
         sample_worker.start()
         train_worker.start()
         sample_worker.join()

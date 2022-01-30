@@ -42,30 +42,29 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   CUDACHECK(cudaSetDevice(rank));
 
   IdArray idx;
-  std::tie(input_nodes, idx) = Sort(input_nodes);
+  IdArray original_input_nodes = input_nodes.Clone();
 
   IdArray send_sizes, send_offset;
-  Cluster(input_nodes, min_vids, world_size, &send_sizes, &send_offset);
-  CUDACHECK(cudaGetLastError());
+  std::tie(input_nodes, idx, send_sizes, send_offset) = Partition(input_nodes, min_vids, world_size);
+  CUDACHECK(cudaStreamSynchronize(0));
   auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}));
 
   IdArray frontier, host_recv_offset;
   Shuffle(input_nodes, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset);
-  CUDACHECK(cudaGetLastError());
+  CUDACHECK(cudaStreamSynchronize(0));
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray features_to_send;
   LoadFeature(frontier, features, &features_to_send);
-  CUDACHECK(cudaGetLastError());
+  CUDACHECK(cudaStreamSynchronize(0));
 
   IdArray features_recv;
   Reshuffle(features_to_send, features->shape[1], n_input_nodes, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &features_recv);
-  CUDACHECK(cudaGetLastError());
+  CUDACHECK(cudaStreamSynchronize(0));
   
   features_recv = Remap(features_recv, idx, features->shape[1]);
-  CUDACHECK(cudaGetLastError());
+  CUDACHECK(cudaStreamSynchronize(0));
 
-  CUDACHECK(cudaDeviceSynchronize());
   *rv = features_recv;
 });
 
