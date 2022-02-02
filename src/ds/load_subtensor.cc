@@ -12,6 +12,8 @@
 #include "context.h"
 #include "cuda/ds_kernel.h"
 #include "cuda/cuda_utils.h"
+#include <chrono>
+#include <thread>
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
@@ -54,9 +56,16 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   CUDACHECK(cudaStreamSynchronize(0));
 
   ConvertGidToLid(frontier, min_vids, rank);
+  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaDeviceSynchronize());
   IdArray features_to_send;
   LoadFeature(frontier, features, &features_to_send);
-  CUDACHECK(cudaStreamSynchronize(0));
+
+  cudaError_t e = cudaStreamSynchronize(0);
+  if(e != cudaSuccess) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    LOG(FATAL) << "error";
+  }
 
   IdArray features_recv;
   Reshuffle(features_to_send, features->shape[1], n_input_nodes, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &features_recv);

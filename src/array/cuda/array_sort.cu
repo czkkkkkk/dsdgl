@@ -30,16 +30,17 @@ std::pair<IdArray, IdArray> Sort(IdArray array, int num_bits) {
   if (num_bits == 0) {
     num_bits = sizeof(IdType)*8;
   }
+  auto* thr_entry = runtime::CUDAThreadEntry::ThreadLocal();
 
   // Allocate workspace
   size_t workspace_size = 0;
   cub::DeviceRadixSort::SortPairs(nullptr, workspace_size,
-      keys_in, keys_out, values_in, values_out, nitems, 0, num_bits);
+      keys_in, keys_out, values_in, values_out, nitems, 0, num_bits, thr_entry->stream);
   void* workspace = device->AllocWorkspace(ctx, workspace_size);
 
   // Compute
   cub::DeviceRadixSort::SortPairs(workspace, workspace_size,
-      keys_in, keys_out, values_in, values_out, nitems, 0, num_bits);
+      keys_in, keys_out, values_in, values_out, nitems, 0, num_bits, thr_entry->stream);
 
   device->FreeWorkspace(ctx, workspace);
 

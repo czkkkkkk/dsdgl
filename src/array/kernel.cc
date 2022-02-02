@@ -10,6 +10,8 @@
 #include <featgraph.h>
 #endif  // USE_TVM
 
+#include <thread>
+
 #include "kernel_decl.h"
 #include "../c_api_common.h"
 #include "./check.h"

@@ -8,6 +8,8 @@
 
 #include <minigun/minigun.h>
 
+#include <thread>
+
 #include "../binary_reduce_impl_decl.h"
 #include "../utils.h"
 #include "./functor.cuh"
@@ -201,6 +203,7 @@ void CallBinaryReduce(const minigun::advance::RuntimeConfig& rtcfg,
       && gdata->out_mapping == nullptr) {
     gdata->out_mapping = static_cast<Idx*>(outcsr.data->data);
   }
+  LOG(INFO) << "thread id in call binary op: " << std::this_thread::get_id();
   // TODO(minjie): allocator
   minigun::advance::Advance<XPU, Idx, cuda::AdvanceConfig, GData<Idx, DType>, UDF>(
         rtcfg, csr, gdata, minigun::IntArray1D<Idx>());

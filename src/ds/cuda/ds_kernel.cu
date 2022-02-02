@@ -8,6 +8,7 @@
 #include <cmath>
 #include <iostream>
 #include "dmlc/logging.h"
+#include <thread>
 
 #include <dgl/array.h>
 #include <dgl/aten/csr.h>
@@ -408,7 +409,7 @@ __global__ void _CSRRowWiseLoadSubtensorKernel(
     IdType *frontier,
     DataType *features,
     DataType *features_to_send) {
-  assert(blockDim.x == WARP_SIZE);
+  // assert(blockDim.x == WARP_SIZE);
   IdType out_row = blockIdx.x*blockDim.y+threadIdx.y;
   while (out_row < num_frontier) {
     const IdType row = frontier[out_row];
@@ -425,8 +426,9 @@ void LoadFeature(IdArray frontier, IdArray features, IdArray *features_to_send) 
   auto dgl_ctx = features->ctx;
   int n_frontier = frontier->shape[0], dim = features->shape[1];
   *features_to_send = IdArray::Empty({n_frontier * dim}, features->dtype, dgl_ctx);
-  constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
-  const dim3 block(WARP_SIZE, BLOCK_ROWS);
+  constexpr int BLOCK_X = 128;
+  constexpr int BLOCK_ROWS = 4;
+  const dim3 block(BLOCK_X, BLOCK_ROWS);
   const dim3 grid(64);
   if (grid.x > 0) {
     _CSRRowWiseLoadSubtensorKernel<BLOCK_ROWS><<<grid, block>>>(

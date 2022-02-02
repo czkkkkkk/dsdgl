@@ -146,8 +146,7 @@ def run(rank, args, train_label):
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
             th.cuda.synchronize()
 
-            batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, min_vids)
-            print(batch_inputs.shape, batch_labels.shape)
+            batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, seeds, min_vids)
 
             after_sampling_ts = time.time()
             sampling_time += after_sampling_ts - start_ts

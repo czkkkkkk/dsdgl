@@ -13,7 +13,6 @@
 #include "cuda/ds_kernel.h"
 #include "cuda/cuda_utils.h"
 #include "./memory_manager.h"
-#include <Python.h>
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
