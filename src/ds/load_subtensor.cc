@@ -42,26 +42,27 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   int rank = context->rank;
   int world_size = context->world_size;
   CUDACHECK(cudaSetDevice(rank));
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  cudaStream_t s = thr_entry->stream;
 
   IdArray idx;
   IdArray original_input_nodes = input_nodes.Clone();
 
   IdArray send_sizes, send_offset;
   std::tie(input_nodes, idx, send_sizes, send_offset) = Partition(input_nodes, min_vids, world_size);
-  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaStreamSynchronize(s));
   auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}));
 
   IdArray frontier, host_recv_offset;
   Shuffle(input_nodes, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset);
-  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaStreamSynchronize(s));
 
   ConvertGidToLid(frontier, min_vids, rank);
-  CUDACHECK(cudaStreamSynchronize(0));
-  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaStreamSynchronize(s));
   IdArray features_to_send;
   LoadFeature(frontier, features, &features_to_send);
 
-  cudaError_t e = cudaStreamSynchronize(0);
+  cudaError_t e = cudaStreamSynchronize(s);
   if(e != cudaSuccess) {
     std::this_thread::sleep_for(std::chrono::seconds(1));
     LOG(FATAL) << "error";
@@ -69,10 +70,10 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
 
   IdArray features_recv;
   Reshuffle(features_to_send, features->shape[1], n_input_nodes, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &features_recv);
-  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaStreamSynchronize(s));
   
   features_recv = Remap(features_recv, idx, features->shape[1]);
-  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaStreamSynchronize(s));
 
   *rv = features_recv;
 });

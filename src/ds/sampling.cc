@@ -84,6 +84,8 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   int rank = context->rank;
   int world_size = context->world_size;
   CUDACHECK(cudaSetDevice(rank));
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  cudaStream_t s = thr_entry->stream;
 
   const DLContext& dgl_context = seeds->ctx;
   auto device = runtime::DeviceAPI::Get(dgl_context);
@@ -111,12 +113,12 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   } else {
     ShuffleV2(seeds, send_offset, rank, world_size, &frontier, &host_recv_offset);
   }
-  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaStreamSynchronize(s));
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray neighbors, edges;
   Sample(frontier, hg.sptr(), fanout, replace, &neighbors, &edges);
-  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaStreamSynchronize(s));
   // ConvertLidToGid(neighbors, global_nid_map);
   
   IdArray reshuffled_neighbors;
@@ -125,16 +127,16 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   } else {
     ReshuffleV2(neighbors, fanout, host_recv_offset, rank, world_size, &reshuffled_neighbors);
   }
-  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaStreamSynchronize(s));
 
   reshuffled_neighbors = Remap(reshuffled_neighbors, idx, fanout);
-  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaStreamSynchronize(s));
 
   // LOG(INFO) << "Reshuffled neibhgors: " << ToDebugString(reshuffled_neighbors);
   
   // ConvertGidToLid(seeds, min_vids, rank);
   HeteroGraphPtr subg = CreateCOO(num_vertices, original_seeds, fanout, reshuffled_neighbors);
-  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaStreamSynchronize(s));
   
   MemoryManager::Global()->ClearUseCount();
   *rv = HeteroGraphRef(subg);

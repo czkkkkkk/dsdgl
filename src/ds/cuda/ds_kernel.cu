@@ -58,7 +58,8 @@ void _GidToLidKernel(IdType* global_ids, size_t size, IdType* min_vids, int rank
 void ConvertGidToLid(IdArray global_ids, IdArray min_vids, int rank) {
   auto* global_ids_ptr = global_ids.Ptr<IdType>();
   auto* min_vids_ptr = min_vids.Ptr<IdType>();
-  _GidToLidKernel<<<BLOCK_NUM, BLOCK_SIZE>>>(global_ids_ptr, global_ids->shape[0], min_vids_ptr, rank);
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  _GidToLidKernel<<<BLOCK_NUM, BLOCK_SIZE, 0, thr_entry->stream>>>(global_ids_ptr, global_ids->shape[0], min_vids_ptr, rank);
 }
 
 __global__
@@ -73,7 +74,8 @@ void _LidToGidKernel(IdType* local_ids, size_t size, IdType* global_nid_map) {
 void ConvertLidToGid(IdArray local_ids, IdArray global_nid_map) {
   auto* local_ids_ptr = local_ids.Ptr<IdType>();
   auto* global_nid_map_ptr = global_nid_map.Ptr<IdType>();
-  _LidToGidKernel<<<BLOCK_NUM, BLOCK_SIZE>>>(local_ids_ptr, local_ids->shape[0], global_nid_map_ptr);
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  _LidToGidKernel<<<BLOCK_NUM, BLOCK_SIZE, 0, thr_entry->stream>>>(local_ids_ptr, local_ids->shape[0], global_nid_map_ptr);
 }
 
 __global__
@@ -122,9 +124,10 @@ std::tuple<IdArray, IdArray, IdArray, IdArray> Partition(IdArray seeds, IdArray 
   int n_threads = 1024;
   int n_blocks = (seeds->shape[0] + n_threads - 1) / n_threads;
   if (n_blocks == 0) n_blocks = 1;
-  _CountDeviceVerticesKernel<<<n_blocks, n_threads>>>(world_size, min_vids.Ptr<IdType>(),
-                                                        seeds->shape[0], seeds.Ptr<IdType>(),
-                                                        part_sizes.Ptr<IdType>(), part_ids.Ptr<IdType>());
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  _CountDeviceVerticesKernel<<<n_blocks, n_threads, 0, thr_entry->stream>>>(world_size, min_vids.Ptr<IdType>(),
+                                                                            seeds->shape[0], seeds.Ptr<IdType>(),
+                                                                            part_sizes.Ptr<IdType>(), part_ids.Ptr<IdType>());
   IdArray part_offset = CumSum(part_sizes, true);
 
   IdArray sorted, index;
@@ -146,9 +149,10 @@ void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_size
 
   int n_threads = 1024;
   int n_blocks = (n_seeds + n_threads - 1) / n_threads;
-  _CountDeviceVerticesKernel<<<n_blocks, n_threads>>>(world_size, min_vids.Ptr<IdType>(),
-                                                        n_seeds, seeds.Ptr<IdType>(),
-                                                        send_sizes->Ptr<IdType>(), part_ids.Ptr<IdType>());
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  _CountDeviceVerticesKernel<<<n_blocks, n_threads, 0, thr_entry->stream>>>(world_size, min_vids.Ptr<IdType>(),
+                                                                            n_seeds, seeds.Ptr<IdType>(),
+                                                                            send_sizes->Ptr<IdType>(), part_ids.Ptr<IdType>());
   *send_offset = CumSum(*send_sizes, true);
   // thrust::exclusive_scan(thrust::device_ptr<IdType>(send_sizes->Ptr<IdType>()), 
   //                        thrust::device_ptr<IdType>(send_sizes->Ptr<IdType>()) + world_size + 1, send_offset->Ptr<IdType>());  
@@ -161,9 +165,10 @@ void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, Id
   int type_bytes = sizeof(T);
   IdType* send_offset_ptr = send_offset.Ptr<IdType>();
   IdType* recv_offset_ptr = recv_offset.Ptr<IdType>();
-  CUDACHECK(cudaMemcpy(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
-                       send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
-                       (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice));
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  CUDACHECK(cudaMemcpyAsync(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
+                            send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
+                            (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice, thr_entry->stream));
   ncclGroupStart();
   for(int r = 0; r < world_size; ++r) {
     if(r != rank) {
@@ -171,12 +176,12 @@ void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, Id
       IdType send_ptr = send_offset_ptr[r] * expand_size;
       IdType recv_size = (recv_offset_ptr[r+1] - recv_offset_ptr[r]) * expand_size;
       IdType recv_ptr = recv_offset_ptr[r] * expand_size;
-      ncclSend(send_buffer_ptr + send_ptr, send_size, NCCL_DATA_TYPE, r, nccl_comm, 0);
-      ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, NCCL_DATA_TYPE, r, nccl_comm, 0);
+      ncclSend(send_buffer_ptr + send_ptr, send_size, NCCL_DATA_TYPE, r, nccl_comm, thr_entry->stream);
+      ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, NCCL_DATA_TYPE, r, nccl_comm, thr_entry->stream);
     }
   }
   ncclGroupEnd();
-  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
 }
 
 void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
@@ -289,8 +294,9 @@ void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* n
   constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
   const dim3 block(WARP_SIZE, BLOCK_ROWS);
   const dim3 grid((n_frontier + block.y - 1) / block.y);
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   if(grid.x > 0) {
-    _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block>>>(
+    _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
       fanout, n_frontier, frontier.Ptr<IdType>(), csr_mat.indptr.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(), csr_mat.data.Ptr<IdType>(),
       edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>(), edges->Ptr<IdType>()
     );
@@ -343,10 +349,11 @@ IdArray Remap(IdArray neighbors, IdArray index, int fanout) {
   IdArray ret = IdArray::Empty({neighbors->shape[0]}, neighbors->dtype, neighbors->ctx);
   int n_threads = 512;
   int n_blocks = 32;
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   if (neighbors->dtype.bits == 64) {
-    _RemapKernel<<<n_blocks, n_threads>>>(ret.Ptr<IdType>(), neighbors.Ptr<IdType>(), index.Ptr<IdType>(), index->shape[0], fanout);
+    _RemapKernel<<<n_blocks, n_threads, 0, thr_entry->stream>>>(ret.Ptr<IdType>(), neighbors.Ptr<IdType>(), index.Ptr<IdType>(), index->shape[0], fanout);
   } else {
-    _RemapKernel<<<n_blocks, n_threads>>>(ret.Ptr<DataType>(), neighbors.Ptr<DataType>(), index.Ptr<IdType>(), index->shape[0], fanout);
+    _RemapKernel<<<n_blocks, n_threads, 0, thr_entry->stream>>>(ret.Ptr<DataType>(), neighbors.Ptr<DataType>(), index.Ptr<IdType>(), index->shape[0], fanout);
   }
   return ret;
 }
@@ -378,7 +385,8 @@ void Replicate(IdArray src, IdArray *dst, int fanout) {
   constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
   const dim3 block(WARP_SIZE, BLOCK_ROWS);
   const dim3 grid((n_seeds + block.y - 1) / block.y);
-  _CSRRowWiseReplicateKernel<BLOCK_ROWS><<<grid, block>>>(
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  _CSRRowWiseReplicateKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
     n_seeds, src_ptr, dst_ptr, fanout
   );
 }
@@ -395,11 +403,11 @@ void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, in
   constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
   const dim3 block(WARP_SIZE, BLOCK_ROWS);
   const dim3 grid((n_frontier + block.y - 1) / block.y);
-  _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block>>>(
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
     fanout, n_frontier, frontier.Ptr<IdType>(), row_idx.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(), csr_mat.data.Ptr<IdType>(),
     edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>(), edges->Ptr<IdType>()
   );
-  CUDACHECK(cudaStreamSynchronize(0));
 }
 
 template <int BLOCK_ROWS>
@@ -430,12 +438,12 @@ void LoadFeature(IdArray frontier, IdArray features, IdArray *features_to_send) 
   constexpr int BLOCK_ROWS = 4;
   const dim3 block(BLOCK_X, BLOCK_ROWS);
   const dim3 grid(64);
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   if (grid.x > 0) {
-    _CSRRowWiseLoadSubtensorKernel<BLOCK_ROWS><<<grid, block>>>(
+    _CSRRowWiseLoadSubtensorKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
       dim, n_frontier, frontier.Ptr<IdType>(), features.Ptr<DataType>(), features_to_send->Ptr<DataType>()
     );
   }
-  CUDACHECK(cudaStreamSynchronize(0));
 }
 
 }
