@@ -102,10 +102,12 @@ void _MultiWayScanRecursive(IdType* workspace, int size, IdType* part_ids, int w
     sums = (IdType*)device->AllocWorkspace(ctx, world_size * n_blocks * sizeof(IdType));
   }
   const dim3 grid(world_size, n_blocks);
-  _MultiWayCtaScanKernel<<<grid, THREADS_PER_BLOCK>>>(workspace, size, part_ids, world_size, sums);
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  _MultiWayCtaScanKernel<<<grid, THREADS_PER_BLOCK, 0, thr_entry->stream>>>(workspace, size, part_ids, world_size, sums);
   if(size > ELE_PER_BLOCK) {
     _MultiWayScanRecursive(sums, n_blocks, nullptr, world_size, device, ctx);
-    _ScanAddKernel<<<grid, THREADS_PER_BLOCK * 2>>>(workspace, sums, size, world_size);
+    auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+    _ScanAddKernel<<<grid, THREADS_PER_BLOCK * 2, 0, thr_entry->stream>>>(workspace, sums, size, world_size);
     device->FreeWorkspace(ctx, sums);
   }
 }
@@ -126,7 +128,8 @@ void _PermutateKernel(IdType* workspace, IdType* input, IdType* part_offset, IdT
 static void _Permutate(IdType *workspace, IdType* input, IdType* part_offset, IdType* part_ids, int size, int world_size, IdType *sorted, IdType* index) {
   int n_blocks = (size + ELE_PER_BLOCK - 1) / ELE_PER_BLOCK;
   const dim3 grid(world_size, n_blocks);
-  _PermutateKernel<<<grid, ELE_PER_BLOCK>>>(workspace, input, part_offset, part_ids, size, world_size, sorted, index);
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  _PermutateKernel<<<grid, ELE_PER_BLOCK, 0, thr_entry->stream>>>(workspace, input, part_offset, part_ids, size, world_size, sorted, index);
 }
 
 std::pair<IdArray, IdArray> MultiWayScan(IdArray input, IdArray part_offset, IdArray part_ids, int world_size) {

@@ -3,6 +3,7 @@ import os
 from dgl.random import seed
 os.environ['DGLBACKEND']='pytorch'
 from dgl.data import register_data_args, load_data
+import dgl.ndarray as nd
 import argparse
 import torch as th
 import dgl
@@ -18,6 +19,11 @@ import dgl.backend as F
 import time
 import random
 from model import SAGE
+import threading
+from threading import Thread
+from queue import Queue
+from torch.cuda.streams import ExternalStream
+import ctypes
 #from dgl.ds.graph_partition_book import *
 
 def setup(rank, world_size):
@@ -54,6 +60,7 @@ class NeighborSampler(object):
             frontier = self.sample_neighbors(self.g, self.num_vertices,
                                              self.device_min_vids, self.device_min_eids,
                                              seeds, fanout, self.global_nid_map, is_local = is_local)
+            
             is_local = False
             # Then we compact the frontier into a bipartite graph for message passing.
             block = dgl.to_block(frontier, seeds)
@@ -63,9 +70,87 @@ class NeighborSampler(object):
             blocks.insert(0, block)
         return blocks
 
+class PCQueue(object):
+  def __init__(self, capacity):
+    self.capacity = threading.Semaphore(capacity)
+    self.product = threading.Semaphore(0)
+    self.buffer = Queue()
+  
+  def get(self):
+    self.product.acquire()
+    item = self.buffer.get()
+    self.capacity.release()
+    return item
+  
+  def put(self, item):
+    self.capacity.acquire()
+    self.buffer.put(item)
+    self.product.release()
+  
+  def stop_produce(self, num):
+    for i in range(num):
+      self.put(None)
+
+class Sampler(Thread):
+  def __init__(self, dataloader, features, labels, min_vids, pc_queue, rank, num_epochs):
+    Thread.__init__(self)
+    self.rank = rank
+    self.dataloader = dataloader
+    self.features = features
+    self.labels = labels
+    self.min_vids = min_vids
+    self.pc_queue = pc_queue
+    self.num_epochs = num_epochs
+  
+  def run(self):
+    th.cuda.set_device(self.rank)
+    s = th.cuda.Stream(device=self.rank)
+    print('cuda stream', s)
+    dgl.ds.set_thread_local_stream(s)
+    with th.cuda.stream(s):
+      for i in range(self.num_epochs):
+        for step, (input_nodes, seeds, blocks) in enumerate(self.dataloader):
+          batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
+          th.cuda.synchronize()
+          self.pc_queue.put((batch_inputs, batch_labels, blocks))
+        self.pc_queue.stop_produce(1)
+
+class Trainer(Thread):
+  def __init__(self, model, loss_fcn, optimizer, pc_queue, rank):
+    Thread.__init__(self)
+    self.rank = rank
+    self.model = model
+    self.loss_fcn = loss_fcn
+    self.optimizer = optimizer
+    self.pc_queue = pc_queue
+
+  def run(self):
+    th.cuda.set_device(self.rank)
+    while True:
+      batch_data = self.pc_queue.get()
+      if batch_data is None:
+        return
+      batch_inputs = batch_data[0]
+      batch_labels = batch_data[1]
+      blocks = batch_data[2]
+      batch_pred = self.model(blocks, batch_inputs)
+      loss = self.loss_fcn(batch_pred, batch_labels)
+      self.optimizer.zero_grad()
+      loss.backward()
+      self.optimizer.step()
+      th.distributed.barrier()
+
+def show_thread():
+  t = threading.currentThread()
+  print('python thread id: {}, thread name: {}'.format(t.ident, t.getName()))
+
 def run(rank, args, train_label):
+    print('num threads: {}, iterop threads: {}'.format(th.get_num_threads(), th.get_num_interop_threads()))
     print('Start rank', rank, 'with args:', args)
     th.cuda.set_device(rank)
+    th.set_num_threads(1)
+    th.set_num_interop_threads(1)
+    print('num threads: {}, iterop threads: {}'.format(th.get_num_threads(), th.get_num_interop_threads()))
     setup(rank, args.n_ranks)
     ds.init(rank, args.n_ranks)
     
@@ -105,7 +190,6 @@ def run(rank, args, train_label):
     min_vids = F.tensor(min_vids, dtype=F.int64).to(device)
     min_eids = [0] + list(gpb._max_edge_ids)
     min_eids = F.tensor(min_eids, dtype=F.int64).to(device)
-    time.sleep(5)
 
     fanout = [int(fanout) for fanout in args.fan_out.split(',')]
     sampler = NeighborSampler(train_g, num_vertices,
@@ -135,44 +219,42 @@ def run(rank, args, train_label):
     stop_epoch = -1
     total = 0
     skip_epoch = 5
-    print("start sampling")
+    data_buffer = PCQueue(5)
+    sample_worker = Sampler(dataloader, train_feature, train_label, min_vids, data_buffer, rank, args.num_epochs)
+
+    s = th.cuda.Stream(device=device)
+    print('cuda stream', s)
+    dgl.ds.set_device_thread_local_stream(device, s)
+
+    sample_worker.start()
+
     for epoch in range(args.num_epochs):
-        sampling_time = 0
-        loading_time = 0
-        training_time = 0
-
         tic = time.time()
-        start_ts = time.time()
-        for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
-            th.cuda.synchronize()
 
-            batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, seeds, min_vids)
-
-            after_sampling_ts = time.time()
-            sampling_time += after_sampling_ts - start_ts
-            # print("start loading")
-            batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, seeds, min_vids)
-
-            th.cuda.synchronize()
-            after_loading_ts = time.time()
-            loading_time += after_loading_ts - after_sampling_ts
+        while True:
+          batch_data = data_buffer.get()
+          if batch_data is None:
+            break
+          with th.cuda.stream(s):
+          
+            batch_inputs = batch_data[0]
+            batch_labels = batch_data[1]
+            blocks = batch_data[2]
 
             batch_pred = model(blocks, batch_inputs)
             loss = loss_fcn(batch_pred, batch_labels)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            th.cuda.synchronize()
+
+            s.synchronize()
             th.distributed.barrier()
-            start_ts = time.time()
-            training_time += start_ts - after_loading_ts
-            
+
         toc = time.time()
-        print('Rank: ', rank, 'epoch time', toc - tic, 'sampling time', sampling_time, 'loading time:', loading_time, 'training time:', training_time)
         if epoch >= skip_epoch:
             total += (toc - tic)
-
         print("rank:", rank, toc - tic)
+    sample_worker.join()
     print("rank:", rank, "sampling time:", total/(args.num_epochs - skip_epoch))
     cleanup()
   
@@ -188,7 +270,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_hidden', default=16, type=int, help='Hidden size')
     parser.add_argument('--dropout', type=float, default=0.5)
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
-    parser.add_argument('--num_epochs', default=10, type=int, help='Epochs')
+    parser.add_argument('--num_epochs', default=6, type=int, help='Epochs')
     parser.add_argument('--lr', type=float, default=0.003)
     args = parser.parse_args()
     

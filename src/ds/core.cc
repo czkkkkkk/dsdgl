@@ -10,7 +10,7 @@
 #include "context.h"
 #include "./conn/nvmlwrap.h"
 #include "./utils.h"
-
+#include "../runtime/cuda/cuda_common.h"
 
 using namespace dgl::runtime;
 
@@ -78,6 +78,16 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")
   int rank = args[0];
   int world_size = args[1];
   Initialize(rank, world_size);
+});
+
+// Set dgl thread local stream
+DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetStream")
+.set_body([] (DGLArgs args, DGLRetValue *rv) {
+  void* s = args[0];
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  thr_entry->stream = (cudaStream_t)s;
+  printf("set local stream: %d\n", thr_entry->stream);
+  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
 });
 
 }

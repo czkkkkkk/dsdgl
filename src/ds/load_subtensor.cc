@@ -12,6 +12,8 @@
 #include "context.h"
 #include "cuda/ds_kernel.h"
 #include "cuda/cuda_utils.h"
+#include <chrono>
+#include <thread>
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
@@ -40,30 +42,38 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   int rank = context->rank;
   int world_size = context->world_size;
   CUDACHECK(cudaSetDevice(rank));
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  cudaStream_t s = thr_entry->stream;
 
   IdArray idx;
-  std::tie(input_nodes, idx) = Sort(input_nodes);
+  IdArray original_input_nodes = input_nodes.Clone();
 
   IdArray send_sizes, send_offset;
-  Cluster(input_nodes, min_vids, world_size, &send_sizes, &send_offset);
-  CUDACHECK(cudaGetLastError());
+  std::tie(input_nodes, idx, send_sizes, send_offset) = Partition(input_nodes, min_vids, world_size);
+  CUDACHECK(cudaStreamSynchronize(s));
   auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}));
 
   IdArray frontier, host_recv_offset;
   Shuffle(input_nodes, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset);
-  CUDACHECK(cudaGetLastError());
+  CUDACHECK(cudaStreamSynchronize(s));
 
   ConvertGidToLid(frontier, min_vids, rank);
+  CUDACHECK(cudaStreamSynchronize(s));
   IdArray features_to_send;
   LoadFeature(frontier, features, &features_to_send);
-  CUDACHECK(cudaGetLastError());
+
+  cudaError_t e = cudaStreamSynchronize(s);
+  if(e != cudaSuccess) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    LOG(FATAL) << "error";
+  }
 
   IdArray features_recv;
   Reshuffle(features_to_send, features->shape[1], n_input_nodes, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &features_recv);
-  CUDACHECK(cudaGetLastError());
+  CUDACHECK(cudaStreamSynchronize(s));
   
   features_recv = Remap(features_recv, idx, features->shape[1]);
-  CUDACHECK(cudaGetLastError());
+  CUDACHECK(cudaStreamSynchronize(s));
 
   *rv = features_recv;
 });

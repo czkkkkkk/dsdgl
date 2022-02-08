@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <dgl/array.h>
 #include <dgl/aten/csr.h>
+#include "../../runtime/cuda/cuda_common.h"
 
 using namespace dgl;
 using namespace dgl::aten;

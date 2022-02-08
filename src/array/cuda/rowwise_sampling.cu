@@ -14,6 +14,7 @@
 #include "../../runtime/cuda/cuda_common.h"
 
 using namespace dgl::kernel::cuda;
+using namespace dgl::runtime;
 
 namespace dgl {
 namespace aten {
@@ -259,7 +260,8 @@ COOMatrix CSRRowWiseSamplingUniform(CSRMatrix mat,
 
   // TODO(dlasalle): Once the device api supports getting the stream from the
   // context, that should be used instead of the default stream here.
-  cudaStream_t stream = 0;
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  cudaStream_t stream = thr_entry->stream;
 
   const int64_t num_rows = rows->shape[0];
   const IdType * const slice_rows = static_cast<const IdType*>(rows->data);

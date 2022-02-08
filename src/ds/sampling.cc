@@ -84,6 +84,8 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   int rank = context->rank;
   int world_size = context->world_size;
   CUDACHECK(cudaSetDevice(rank));
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  cudaStream_t s = thr_entry->stream;
 
   const DLContext& dgl_context = seeds->ctx;
   auto device = runtime::DeviceAPI::Get(dgl_context);
@@ -100,9 +102,11 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
 
   IdArray send_sizes, send_offset;
   std::tie(seeds, idx, send_sizes, send_offset) = Partition(seeds, min_vids, world_size);
+  CUDACHECK(cudaStreamSynchronize(s));
   // Cluster(seeds, min_vids, world_size, &send_sizes, &send_offset);
   auto host_send_sizes = send_sizes.CopyTo(DLContext({kDLCPU, 0}));
   auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}));
+  CUDACHECK(cudaStreamSynchronize(s));
 
   IdArray frontier, host_recv_offset;
   int use_nccl = GetEnvParam("USE_NCCL", 0);
@@ -111,12 +115,12 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   } else {
     ShuffleV2(seeds, send_offset, rank, world_size, &frontier, &host_recv_offset);
   }
-  CUDACHECK(cudaGetLastError());
+  CUDACHECK(cudaStreamSynchronize(s));
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray neighbors, edges;
   Sample(frontier, hg.sptr(), fanout, replace, &neighbors, &edges);
-  CUDACHECK(cudaGetLastError());
+  CUDACHECK(cudaStreamSynchronize(s));
   // ConvertLidToGid(neighbors, global_nid_map);
   
   IdArray reshuffled_neighbors;
@@ -125,16 +129,17 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   } else {
     ReshuffleV2(neighbors, fanout, host_recv_offset, rank, world_size, &reshuffled_neighbors);
   }
-  CUDACHECK(cudaGetLastError());
+  CUDACHECK(cudaStreamSynchronize(s));
 
   reshuffled_neighbors = Remap(reshuffled_neighbors, idx, fanout);
-  CUDACHECK(cudaGetLastError());
+  CUDACHECK(cudaStreamSynchronize(s));
 
   // LOG(INFO) << "Reshuffled neibhgors: " << ToDebugString(reshuffled_neighbors);
   
   // ConvertGidToLid(seeds, min_vids, rank);
   HeteroGraphPtr subg = CreateCOO(num_vertices, original_seeds, fanout, reshuffled_neighbors);
-
+  CUDACHECK(cudaStreamSynchronize(s));
+  
   MemoryManager::Global()->ClearUseCount();
   *rv = HeteroGraphRef(subg);
 });

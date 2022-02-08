@@ -8,6 +8,8 @@
 #include "./array_index_select.cuh"
 #include "./utils.h"
 
+#include <thread>
+
 namespace dgl {
 using runtime::NDArray;
 namespace aten {
