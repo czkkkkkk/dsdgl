@@ -102,9 +102,11 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
 
   IdArray send_sizes, send_offset;
   std::tie(seeds, idx, send_sizes, send_offset) = Partition(seeds, min_vids, world_size);
+  CUDACHECK(cudaStreamSynchronize(s));
   // Cluster(seeds, min_vids, world_size, &send_sizes, &send_offset);
   auto host_send_sizes = send_sizes.CopyTo(DLContext({kDLCPU, 0}));
   auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}));
+  CUDACHECK(cudaStreamSynchronize(s));
 
   IdArray frontier, host_recv_offset;
   int use_nccl = GetEnvParam("USE_NCCL", 0);

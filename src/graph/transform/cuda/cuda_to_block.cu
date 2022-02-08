@@ -20,6 +20,7 @@
 
 using namespace dgl::aten;
 using namespace dgl::runtime::cuda;
+using namespace dgl::runtime;
 
 namespace dgl {
 namespace transform {
@@ -328,7 +329,10 @@ ToBlockGPU(
     HeteroGraphPtr graph,
     const std::vector<IdArray> &rhs_nodes,
     const bool include_rhs_in_lhs) {
-  cudaStream_t stream = 0;
+
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  cudaStream_t stream = thr_entry->stream;
+
   const auto& ctx = graph->Context();
   auto device = runtime::DeviceAPI::Get(ctx);
 

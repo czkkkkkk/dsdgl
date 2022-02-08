@@ -109,15 +109,10 @@ class Sampler(Thread):
     dgl.ds.set_thread_local_stream(s)
     with th.cuda.stream(s):
       for i in range(self.num_epochs):
-        cnt = 5
         for step, (input_nodes, seeds, blocks) in enumerate(self.dataloader):
-          th.cuda.synchronize()
           batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
           th.cuda.synchronize()
           self.pc_queue.put((batch_inputs, batch_labels, blocks))
-          cnt -= 1
-          if cnt == 0:
-            break
         self.pc_queue.stop_produce(1)
 
 class Trainer(Thread):
@@ -224,40 +219,41 @@ def run(rank, args, train_label):
     stop_epoch = -1
     total = 0
     skip_epoch = 5
-    data_buffer = PCQueue(50)
+    data_buffer = PCQueue(5)
     sample_worker = Sampler(dataloader, train_feature, train_label, min_vids, data_buffer, rank, args.num_epochs)
 
     s = th.cuda.Stream(device=device)
     print('cuda stream', s)
-    # dgl.ds.set_thread_local_stream(device, s)
+    dgl.ds.set_device_thread_local_stream(device, s)
 
     sample_worker.start()
-    # for epoch in range(args.num_epochs):
-    #     tic = time.time()
 
-    #     while True:
-    #       batch_data = data_buffer.get()
-    #       if batch_data is None:
-    #         break
-    #       with th.cuda.stream(s):
+    for epoch in range(args.num_epochs):
+        tic = time.time()
+
+        while True:
+          batch_data = data_buffer.get()
+          if batch_data is None:
+            break
+          with th.cuda.stream(s):
           
-    #         batch_inputs = batch_data[0]
-    #         batch_labels = batch_data[1]
-    #         blocks = batch_data[2]
+            batch_inputs = batch_data[0]
+            batch_labels = batch_data[1]
+            blocks = batch_data[2]
 
-    #         batch_pred = model(blocks, batch_inputs)
-    #         loss = loss_fcn(batch_pred, batch_labels)
-    #         optimizer.zero_grad()
-    #         loss.backward()
-    #         optimizer.step()
+            batch_pred = model(blocks, batch_inputs)
+            loss = loss_fcn(batch_pred, batch_labels)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-    #         s.synchronize()
-    #         th.distributed.barrier()
+            s.synchronize()
+            th.distributed.barrier()
 
-    #     toc = time.time()
-    #     if epoch >= skip_epoch:
-    #         total += (toc - tic)
-    #     print("rank:", rank, toc - tic)
+        toc = time.time()
+        if epoch >= skip_epoch:
+            total += (toc - tic)
+        print("rank:", rank, toc - tic)
     sample_worker.join()
     print("rank:", rank, "sampling time:", total/(args.num_epochs - skip_epoch))
     cleanup()

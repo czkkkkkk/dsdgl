@@ -129,7 +129,6 @@ std::tuple<IdArray, IdArray, IdArray, IdArray> Partition(IdArray seeds, IdArray 
                                                                             seeds->shape[0], seeds.Ptr<IdType>(),
                                                                             part_sizes.Ptr<IdType>(), part_ids.Ptr<IdType>());
   IdArray part_offset = CumSum(part_sizes, true);
-
   IdArray sorted, index;
   std::tie(sorted, index) = MultiWayScan(seeds, part_offset, part_ids, world_size);
   return {sorted, index, part_sizes, part_offset};
@@ -169,26 +168,31 @@ void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, Id
   CUDACHECK(cudaMemcpyAsync(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
                             send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
                             (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice, thr_entry->stream));
+  CUDACHECK(cudaDeviceSynchronize());
   ncclGroupStart();
   for(int r = 0; r < world_size; ++r) {
-    if(r != rank) {
+    if (r != rank) {
       IdType send_size = (send_offset_ptr[r+1] - send_offset_ptr[r]) * expand_size;
       IdType send_ptr = send_offset_ptr[r] * expand_size;
       IdType recv_size = (recv_offset_ptr[r+1] - recv_offset_ptr[r]) * expand_size;
       IdType recv_ptr = recv_offset_ptr[r] * expand_size;
-      ncclSend(send_buffer_ptr + send_ptr, send_size, NCCL_DATA_TYPE, r, nccl_comm, thr_entry->stream);
-      ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, NCCL_DATA_TYPE, r, nccl_comm, thr_entry->stream);
+      CHECK_EQ(send_size, recv_size);
+      CHECK_EQ(send_ptr, 0);
+      CHECK_EQ(recv_ptr, 0);
+      printf("send size: %d, recv size: %d\n", send_size, recv_size);
+      ncclSend(send_buffer_ptr + send_ptr, send_size, NCCL_DATA_TYPE, r, nccl_comm, 0);
+      ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, NCCL_DATA_TYPE, r, nccl_comm, 0);
     }
   }
   ncclGroupEnd();
-  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
+  CUDACHECK(cudaDeviceSynchronize());
 }
 
 void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
   if (send_buffer->dtype.bits == 64) {
-    _AllToAll<IdType, ncclUint64>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm);
+    _AllToAll<IdType, ncclInt64>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm);
   } else {
-    _AllToAll<DataType, ncclUint32>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm);
+    _AllToAll<DataType, ncclInt32>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm);
   }
 }
 
@@ -211,11 +215,13 @@ void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int ra
   auto dgl_context = seeds->ctx;
   auto host_dgl_context = DLContext{kDLCPU, 0};
   IdArray recv_sizes = IdArray::Empty({world_size}, seeds->dtype, dgl_context);
-  // IdArray recv_sizes = MemoryManager::Global()->Empty("RECV_SIZES", {world_size}, seeds->dtype, dgl_context);
   IdArray range_seq = Range(0, world_size + 1, 64, host_dgl_context);
+  IdArray host_send_sizes = send_sizes.CopyTo(host_dgl_context);
   AllToAll(send_sizes, range_seq, recv_sizes, range_seq, 1, rank, world_size, nccl_comm);
 
+  CUDACHECK(cudaDeviceSynchronize());
   IdArray host_recv_sizes = recv_sizes.CopyTo(host_dgl_context);
+  CUDACHECK(cudaDeviceSynchronize());
   *host_recv_offset = Full<int64_t>(0, world_size + 1, host_dgl_context);
   // *host_recv_offset = MemoryManager::Global()->Full<int64_t>("HOST_RECV_OFFSET", 0, world_size + 1, host_dgl_context);
   auto* host_recv_offset_ptr = host_recv_offset->Ptr<IdType>();
@@ -286,6 +292,7 @@ void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* n
   // IdArray edge_offset = MemoryManager::Global()->Full<int64_t>("EDGE_OFFSET", fanout, n_frontier + 1, dgl_ctx);
   auto edge_offset_ptr = thrust::device_ptr<IdType>(edge_offset.Ptr<IdType>());
   thrust::exclusive_scan(edge_offset_ptr, edge_offset_ptr + n_frontier + 1, edge_offset_ptr);
+  CUDACHECK(cudaDeviceSynchronize());
   *neighbors = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
   *edges = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
   // *neighbors = MemoryManager::Global()->Empty("NEIGHBORS", {n_frontier * fanout}, frontier->dtype, dgl_ctx);

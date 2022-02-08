@@ -28,7 +28,7 @@ def init(rank, world_size):
     _CAPI_DGLDSInitialize(rank, world_size)
 
 # dgl thread local stream for both forward and backward threads
-def set_thread_local_stream(device, s):
+def set_device_thread_local_stream(device, s):
     with th.cuda.stream(s):
         a = th.full((), 0.0, device=device, dtype=th.float32, requires_grad=True)
         loss = DummyOp.apply(a)
