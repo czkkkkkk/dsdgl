@@ -95,7 +95,6 @@ void CusparseCsrmm2(
   // C = trans(A x trans(B)).
   // Currently, we use cublasXgeam to implement transposition and allocate intermediate
   // workspace memory for this.
-  LOG(INFO) << "cusparse runtime config";
   const int m = csr.num_rows;
   const int n = x_length;
   const int k = csr.num_cols;

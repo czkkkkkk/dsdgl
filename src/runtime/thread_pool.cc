@@ -253,7 +253,6 @@ class ThreadPool {
           num_workers_, [this](int worker_id) { this->RunWorker(worker_id); },
           exclude_worker0_ /* include_main_thread */));
     num_workers_used_ = threads_->Configure(threading::ThreadGroup::kBig, 0, exclude_worker0_);
-    LOG(INFO) << "Thread pool exclude worker 0? " << exclude_worker0_;
   }
   ~ThreadPool() {
     for (std::unique_ptr<SpscTaskQueue>& q : queues_) {
@@ -359,7 +358,6 @@ int DGLBackendParallelLaunch(
     FDGLParallelLambda flambda,
     void* cdata,
     int num_task) {
-  LOG(INFO) << "Using dgl backend parallel launch";
   int res = dgl::runtime::ThreadPool::ThreadLocal()->Launch(
       flambda, cdata, num_task, 1);
   return res;
