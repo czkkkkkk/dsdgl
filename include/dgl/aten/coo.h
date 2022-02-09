@@ -291,16 +291,18 @@ void COOSort_(COOMatrix* mat, bool sort_column = false);
  * \param sort_column True if column index should be sorted too.
  * \return COO matrix with index sorted.
  */
-inline COOMatrix COOSort(COOMatrix mat, bool sort_column = false) {
-  if ((mat.row_sorted && !sort_column) || mat.col_sorted)
-    return mat;
-  COOMatrix ret(mat.num_rows, mat.num_cols,
-                mat.row.Clone(), mat.col.Clone(),
-                COOHasData(mat)? mat.data.Clone() : mat.data,
-                mat.row_sorted, mat.col_sorted);
-  COOSort_(&ret, sort_column);
-  return ret;
-}
+COOMatrix COOSort(COOMatrix mat, bool sort_column = false);
+// COOMatrix COOSort(COOMatrix mat, bool sort_column = false) {
+//   if ((mat.row_sorted && !sort_column) || mat.col_sorted)
+//     return mat;
+//   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+//   COOMatrix ret(mat.num_rows, mat.num_cols,
+//                 mat.row.Clone(thr_entry->stream), mat.col.Clone(thr_entry->stream),
+//                 COOHasData(mat)? mat.data.Clone() : mat.data,
+//                 mat.row_sorted, mat.col_sorted);
+//   COOSort_(&ret, sort_column);
+//   return ret;
+// }
 
 /*!
  * \brief Remove entries from COO matrix by entry indices (data indices)

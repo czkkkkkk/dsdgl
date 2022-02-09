@@ -13,6 +13,7 @@
 #include "../c_api_common.h"
 #include "./array_op.h"
 #include "./arith.h"
+#include "../runtime/cuda/cuda_common.h"
 
 using namespace dgl::runtime;
 
@@ -762,6 +763,20 @@ void COOSort_(COOMatrix* mat, bool sort_column) {
     });
   });
 }
+
+// NOTE: we polluted the `COOSort` here by assuming the underlying env is always cuda
+COOMatrix COOSort(COOMatrix mat, bool sort_column) {
+  if ((mat.row_sorted && !sort_column) || mat.col_sorted)
+    return mat;
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  COOMatrix ret(mat.num_rows, mat.num_cols,
+                mat.row.Clone(thr_entry->stream), mat.col.Clone(thr_entry->stream),
+                COOHasData(mat)? mat.data.Clone() : mat.data,
+                mat.row_sorted, mat.col_sorted);
+  COOSort_(&ret, sort_column);
+  return ret;
+}
+
 
 std::pair<bool, bool> COOIsSorted(COOMatrix coo) {
   if (coo.row->shape[0] <= 1)

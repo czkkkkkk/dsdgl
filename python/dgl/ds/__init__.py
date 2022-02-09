@@ -5,7 +5,6 @@ import torch as th
 from .sampling import *
 from .pin_graph import pin_graph, test_array
 from .load_subtensor import load_subtensor
-from .test import thread_work
 
 class DummyOp(th.autograd.Function):
     @staticmethod

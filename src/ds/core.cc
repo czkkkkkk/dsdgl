@@ -86,7 +86,7 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetStream")
   void* s = args[0];
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   thr_entry->stream = (cudaStream_t)s;
-  printf("set local stream: %d\n", thr_entry->stream);
+  LOG(INFO) << "Set local stream: " << thr_entry->stream;
   CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
 });
 

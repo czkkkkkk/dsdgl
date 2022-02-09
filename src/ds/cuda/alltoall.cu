@@ -4,6 +4,9 @@
 
 #include "../comm/comm_info.h"
 #include "../utils.h"
+#include "../../runtime/cuda/cuda_common.h"
+
+using namespace dgl::runtime;
 
 namespace dgl {
 namespace ds {
@@ -168,6 +171,7 @@ void _AlltoallKernel(AlltoallArgs args) {
 }
 
 void Alltoall(void* sendbuff, void* send_offset, void* recvbuff, void* recv_offset, CommInfo* comm_info, int rank, int world_size) {
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   AlltoallArgs args;
   args.rank = rank;
   args.world_size = world_size;
@@ -182,9 +186,9 @@ void Alltoall(void* sendbuff, void* send_offset, void* recvbuff, void* recv_offs
   dim3 block_dim(n_threads);
   void *kargs[] = {&args};
   cudaError_t e = cudaLaunchKernel((void *)_AlltoallKernel,
-                                  grid_dim, block_dim, kargs, 0, 0);
+                                  grid_dim, block_dim, kargs, 0, thr_entry->stream);
   CUDACHECKERR(e);
-  CUDACHECK(cudaStreamSynchronize(0));
+  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
 }
 
 }

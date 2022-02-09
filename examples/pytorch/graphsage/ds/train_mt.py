@@ -22,8 +22,6 @@ from model import SAGE
 import threading
 from threading import Thread
 from queue import Queue
-from torch.cuda.streams import ExternalStream
-import ctypes
 #from dgl.ds.graph_partition_book import *
 
 def setup(rank, world_size):
@@ -110,8 +108,10 @@ class Sampler(Thread):
     with th.cuda.stream(s):
       for i in range(self.num_epochs):
         for step, (input_nodes, seeds, blocks) in enumerate(self.dataloader):
+          # batch_inputs = th.ones([input_nodes.shape[0], self.features.shape[1]], dtype=self.features.dtype, device=self.rank)
+          # batch_labels = th.ones([seeds.shape[0]], dtype=self.labels.dtype, device=self.rank)
           batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
-          th.cuda.synchronize()
+          s.synchronize()
           self.pc_queue.put((batch_inputs, batch_labels, blocks))
         self.pc_queue.stop_produce(1)
 
