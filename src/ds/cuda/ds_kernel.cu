@@ -168,7 +168,7 @@ void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, Id
   CUDACHECK(cudaMemcpyAsync(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
                             send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
                             (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice, thr_entry->stream));
-  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
   ncclGroupStart();
   for(int r = 0; r < world_size; ++r) {
     if (r != rank) {
@@ -176,16 +176,12 @@ void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, Id
       IdType send_ptr = send_offset_ptr[r] * expand_size;
       IdType recv_size = (recv_offset_ptr[r+1] - recv_offset_ptr[r]) * expand_size;
       IdType recv_ptr = recv_offset_ptr[r] * expand_size;
-      CHECK_EQ(send_size, recv_size);
-      CHECK_EQ(send_ptr, 0);
-      CHECK_EQ(recv_ptr, 0);
-      printf("send size: %d, recv size: %d\n", send_size, recv_size);
       ncclSend(send_buffer_ptr + send_ptr, send_size, NCCL_DATA_TYPE, r, nccl_comm, 0);
       ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, NCCL_DATA_TYPE, r, nccl_comm, 0);
     }
   }
   ncclGroupEnd();
-  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
 }
 
 void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
@@ -197,6 +193,7 @@ void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdA
 }
 
 void AllToAllV2(IdArray send_buffer, IdArray send_offset, IdArray* recv_buffer, IdArray* host_recv_offset, int rank, int world_size, const std::string& scope) {
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   auto* ds_context = DSContext::Global();
   auto dgl_context = send_buffer->ctx;
   *recv_buffer = IdArray::Empty({MAX_RECV_BUFFER_SIZE}, send_buffer->dtype, dgl_context);
@@ -205,23 +202,24 @@ void AllToAllV2(IdArray send_buffer, IdArray send_offset, IdArray* recv_buffer, 
   // IdArray recv_offset = MemoryManager::Global()->Empty(scope + "_RECV_OFFSET", {world_size + 1}, send_buffer->dtype, dgl_context);
   Alltoall(send_buffer.Ptr<IdType>(), send_offset.Ptr<IdType>(), recv_buffer->Ptr<IdType>(), recv_offset.Ptr<IdType>(), &ds_context->comm_info, rank, world_size);
 
-  *host_recv_offset = recv_offset.CopyTo({kDLCPU, 0});
+  *host_recv_offset = recv_offset.CopyTo({kDLCPU, 0}, thr_entry->stream);
   IdType* host_recv_offset_ptr = host_recv_offset->Ptr<IdType>();
   CHECK_LE(host_recv_offset_ptr[world_size], MAX_RECV_BUFFER_SIZE);
   *recv_buffer = recv_buffer->CreateView({(signed long) host_recv_offset_ptr[world_size]}, send_buffer->dtype);
 }
 
 void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int rank, int world_size, ncclComm_t nccl_comm, IdArray* frontier, IdArray* host_recv_offset) {
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   auto dgl_context = seeds->ctx;
   auto host_dgl_context = DLContext{kDLCPU, 0};
   IdArray recv_sizes = IdArray::Empty({world_size}, seeds->dtype, dgl_context);
   IdArray range_seq = Range(0, world_size + 1, 64, host_dgl_context);
-  IdArray host_send_sizes = send_sizes.CopyTo(host_dgl_context);
+  IdArray host_send_sizes = send_sizes.CopyTo(host_dgl_context, thr_entry->stream);
   AllToAll(send_sizes, range_seq, recv_sizes, range_seq, 1, rank, world_size, nccl_comm);
 
-  CUDACHECK(cudaDeviceSynchronize());
-  IdArray host_recv_sizes = recv_sizes.CopyTo(host_dgl_context);
-  CUDACHECK(cudaDeviceSynchronize());
+  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
+  IdArray host_recv_sizes = recv_sizes.CopyTo(host_dgl_context, thr_entry->stream);
+  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
   *host_recv_offset = Full<int64_t>(0, world_size + 1, host_dgl_context);
   // *host_recv_offset = MemoryManager::Global()->Full<int64_t>("HOST_RECV_OFFSET", 0, world_size + 1, host_dgl_context);
   auto* host_recv_offset_ptr = host_recv_offset->Ptr<IdType>();
@@ -288,11 +286,12 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
 void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges) {
   auto dgl_ctx = frontier->ctx;
   int n_frontier = frontier->shape[0];
-  IdArray edge_offset = Full<int64_t>(fanout, n_frontier + 1, dgl_ctx);
+  IdArray edge_offset = Full<int64_t>(fanout, n_frontier, dgl_ctx);
   // IdArray edge_offset = MemoryManager::Global()->Full<int64_t>("EDGE_OFFSET", fanout, n_frontier + 1, dgl_ctx);
-  auto edge_offset_ptr = thrust::device_ptr<IdType>(edge_offset.Ptr<IdType>());
-  thrust::exclusive_scan(edge_offset_ptr, edge_offset_ptr + n_frontier + 1, edge_offset_ptr);
-  CUDACHECK(cudaDeviceSynchronize());
+  edge_offset = CumSum(edge_offset, true);
+  // auto edge_offset_ptr = thrust::device_ptr<IdType>(edge_offset.Ptr<IdType>());
+  // thrust::exclusive_scan(edge_offset_ptr, edge_offset_ptr + n_frontier + 1, edge_offset_ptr);
+  // CUDACHECK(cudaDeviceSynchronize());
   *neighbors = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
   *edges = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
   // *neighbors = MemoryManager::Global()->Empty("NEIGHBORS", {n_frontier * fanout}, frontier->dtype, dgl_ctx);
@@ -328,12 +327,13 @@ void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_
 }
 
 void ReshuffleV2(IdArray neighbors, int fanout, IdArray host_shuffle_recv_offset, int rank, int world_size, IdArray* reshuffled_neighbors) {
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   auto dgl_context = neighbors->ctx;
   auto* host_shuffle_recv_offset_ptr = host_shuffle_recv_offset.Ptr<IdType>();
   for(int i = 0; i <= world_size; ++i) {
     host_shuffle_recv_offset_ptr[i] *= fanout;
   }
-  auto shuffle_recv_offset = host_shuffle_recv_offset.CopyTo(dgl_context);
+  auto shuffle_recv_offset = host_shuffle_recv_offset.CopyTo(dgl_context, thr_entry->stream);
   IdArray recv_offset;
   AllToAllV2(neighbors, shuffle_recv_offset, reshuffled_neighbors, &recv_offset, rank, world_size, "RESHUFFLEV2");
 }

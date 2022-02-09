@@ -97,15 +97,15 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
     ConvertLidToGid(seeds, global_nid_map);
   }
   IdArray idx;
-  IdArray original_seeds = seeds.Clone();
+  IdArray original_seeds = seeds.Clone(s);
   // std::tie(seeds, idx) = Sort(seeds);
 
   IdArray send_sizes, send_offset;
   std::tie(seeds, idx, send_sizes, send_offset) = Partition(seeds, min_vids, world_size);
   CUDACHECK(cudaStreamSynchronize(s));
   // Cluster(seeds, min_vids, world_size, &send_sizes, &send_offset);
-  auto host_send_sizes = send_sizes.CopyTo(DLContext({kDLCPU, 0}));
-  auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}));
+  auto host_send_sizes = send_sizes.CopyTo(DLContext({kDLCPU, 0}), s);
+  auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}), s);
   CUDACHECK(cudaStreamSynchronize(s));
 
   IdArray frontier, host_recv_offset;

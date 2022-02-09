@@ -34,11 +34,11 @@ namespace ds {
 DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   IdArray features = args[0];
-  IdArray input_nodes = args[1];
+  IdArray original_input_nodes = args[1];
   IdArray min_vids = args[2];
 
   auto* context = DSContext::Global();
-  int n_input_nodes = input_nodes->shape[0];
+  int n_input_nodes = original_input_nodes->shape[0];
   int rank = context->rank;
   int world_size = context->world_size;
   CUDACHECK(cudaSetDevice(rank));
@@ -46,12 +46,12 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   cudaStream_t s = thr_entry->stream;
 
   IdArray idx;
-  IdArray original_input_nodes = input_nodes.Clone();
+  IdArray input_nodes = original_input_nodes.Clone(s);
 
   IdArray send_sizes, send_offset;
   std::tie(input_nodes, idx, send_sizes, send_offset) = Partition(input_nodes, min_vids, world_size);
   CUDACHECK(cudaStreamSynchronize(s));
-  auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}));
+  auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}), s);
 
   IdArray frontier, host_recv_offset;
   Shuffle(input_nodes, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset);
