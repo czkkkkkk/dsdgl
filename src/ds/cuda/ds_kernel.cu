@@ -168,7 +168,7 @@ void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, Id
   CUDACHECK(cudaMemcpyAsync(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
                             send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
                             (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice, thr_entry->stream));
-  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
+  // CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
   ncclGroupStart();
   for(int r = 0; r < world_size; ++r) {
     if (r != rank) {
@@ -176,12 +176,12 @@ void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, Id
       IdType send_ptr = send_offset_ptr[r] * expand_size;
       IdType recv_size = (recv_offset_ptr[r+1] - recv_offset_ptr[r]) * expand_size;
       IdType recv_ptr = recv_offset_ptr[r] * expand_size;
-      ncclSend(send_buffer_ptr + send_ptr, send_size, NCCL_DATA_TYPE, r, nccl_comm, 0);
-      ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, NCCL_DATA_TYPE, r, nccl_comm, 0);
+      ncclSend(send_buffer_ptr + send_ptr, send_size, NCCL_DATA_TYPE, r, nccl_comm, thr_entry->stream);
+      ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, NCCL_DATA_TYPE, r, nccl_comm, thr_entry->stream);
     }
   }
   ncclGroupEnd();
-  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
+  // CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
 }
 
 void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
@@ -203,6 +203,7 @@ void AllToAllV2(IdArray send_buffer, IdArray send_offset, IdArray* recv_buffer, 
   Alltoall(send_buffer.Ptr<IdType>(), send_offset.Ptr<IdType>(), recv_buffer->Ptr<IdType>(), recv_offset.Ptr<IdType>(), &ds_context->comm_info, rank, world_size);
 
   *host_recv_offset = recv_offset.CopyTo({kDLCPU, 0}, thr_entry->stream);
+  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
   IdType* host_recv_offset_ptr = host_recv_offset->Ptr<IdType>();
   CHECK_LE(host_recv_offset_ptr[world_size], MAX_RECV_BUFFER_SIZE);
   *recv_buffer = recv_buffer->CreateView({(signed long) host_recv_offset_ptr[world_size]}, send_buffer->dtype);
@@ -215,9 +216,10 @@ void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int ra
   IdArray recv_sizes = IdArray::Empty({world_size}, seeds->dtype, dgl_context);
   IdArray range_seq = Range(0, world_size + 1, 64, host_dgl_context);
   IdArray host_send_sizes = send_sizes.CopyTo(host_dgl_context, thr_entry->stream);
+  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
   AllToAll(send_sizes, range_seq, recv_sizes, range_seq, 1, rank, world_size, nccl_comm);
 
-  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
+  // CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
   IdArray host_recv_sizes = recv_sizes.CopyTo(host_dgl_context, thr_entry->stream);
   CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
   *host_recv_offset = Full<int64_t>(0, world_size + 1, host_dgl_context);

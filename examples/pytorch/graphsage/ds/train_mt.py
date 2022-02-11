@@ -26,7 +26,7 @@ from queue import Queue
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12377'
+    os.environ['MASTER_PORT'] = '12398'
 
     # initialize the process group
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
@@ -145,12 +145,6 @@ def show_thread():
   print('python thread id: {}, thread name: {}'.format(t.ident, t.getName()))
 
 def run(rank, args, train_label):
-    print('num threads: {}, iterop threads: {}'.format(th.get_num_threads(), th.get_num_interop_threads()))
-    print('Start rank', rank, 'with args:', args)
-    th.cuda.set_device(rank)
-    th.set_num_threads(1)
-    th.set_num_interop_threads(1)
-    print('num threads: {}, iterop threads: {}'.format(th.get_num_threads(), th.get_num_interop_threads()))
     setup(rank, args.n_ranks)
     ds.init(rank, args.n_ranks)
     
@@ -219,7 +213,7 @@ def run(rank, args, train_label):
     stop_epoch = -1
     total = 0
     skip_epoch = 5
-    data_buffer = PCQueue(5)
+    data_buffer = PCQueue(10)
     sample_worker = Sampler(dataloader, train_feature, train_label, min_vids, data_buffer, rank, args.num_epochs)
 
     s = th.cuda.Stream(device=device)
@@ -231,10 +225,13 @@ def run(rank, args, train_label):
     for epoch in range(args.num_epochs):
         tic = time.time()
 
+        training_time = 0
         while True:
           batch_data = data_buffer.get()
+          # print('buffer size:', data_buffer.buffer.qsize())
           if batch_data is None:
             break
+          start_ts = time.time()
           with th.cuda.stream(s):
           
             batch_inputs = batch_data[0]
@@ -248,11 +245,13 @@ def run(rank, args, train_label):
             optimizer.step()
 
             s.synchronize()
-            th.distributed.barrier()
+          end_ts = time.time()
+          training_time += end_ts - start_ts
 
         toc = time.time()
         if epoch >= skip_epoch:
             total += (toc - tic)
+        print('training time:', training_time)
         print("rank:", rank, toc - tic)
     sample_worker.join()
     print("rank:", rank, "sampling time:", total/(args.num_epochs - skip_epoch))
@@ -270,7 +269,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_hidden', default=16, type=int, help='Hidden size')
     parser.add_argument('--dropout', type=float, default=0.5)
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
-    parser.add_argument('--num_epochs', default=6, type=int, help='Epochs')
+    parser.add_argument('--num_epochs', default=10, type=int, help='Epochs')
     parser.add_argument('--lr', type=float, default=0.003)
     args = parser.parse_args()
     
