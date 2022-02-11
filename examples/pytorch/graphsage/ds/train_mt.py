@@ -52,7 +52,7 @@ class NeighborSampler(object):
     '''
     def sample_blocks(self, g, seeds, exclude_eids=None):
         blocks = []
-        is_local = False
+        is_local = True
         for fanout in self.fanouts:
             # For each seed node, sample ``fanout`` neighbors.
             frontier = self.sample_neighbors(self.g, self.num_vertices,
@@ -61,7 +61,7 @@ class NeighborSampler(object):
             
             is_local = False
             # Then we compact the frontier into a bipartite graph for message passing.
-            block = dgl.to_block(frontier, seeds)
+            block = dgl.to_block(frontier, seeds, min_vids = self.device_min_vids)
             # block = ds.to_block(frontier, seeds)
             # Obtain the seed nodes for next layer.
             seeds = block.srcdata[dgl.NID]
@@ -102,7 +102,7 @@ class Sampler(Thread):
   
   def run(self):
     th.cuda.set_device(self.rank)
-    s = th.cuda.Stream(device=self.rank)
+    s = th.cuda.Stream(device=self.rank, priority=-1)
     print('cuda stream', s)
     dgl.ds.set_thread_local_stream(s)
     with th.cuda.stream(s):
@@ -222,40 +222,41 @@ def run(rank, args, train_label):
     data_buffer = PCQueue(5)
     sample_worker = Sampler(dataloader, train_feature, train_label, min_vids, data_buffer, rank, args.num_epochs)
 
-    s = th.cuda.Stream(device=device)
+    s = th.cuda.Stream(device=device, priority=0)
     print('cuda stream', s)
     dgl.ds.set_device_thread_local_stream(device, s)
 
     sample_worker.start()
-
+    train_time = 0
     for epoch in range(args.num_epochs):
         tic = time.time()
-
+        step = 0
         while True:
           batch_data = data_buffer.get()
           if batch_data is None:
             break
+          begin = time.time()
           with th.cuda.stream(s):
-          
             batch_inputs = batch_data[0]
             batch_labels = batch_data[1]
             blocks = batch_data[2]
-
             batch_pred = model(blocks, batch_inputs)
             loss = loss_fcn(batch_pred, batch_labels)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
             s.synchronize()
             th.distributed.barrier()
+          step += time.time() - begin
 
         toc = time.time()
         if epoch >= skip_epoch:
             total += (toc - tic)
+            train_time += step
         print("rank:", rank, toc - tic)
     sample_worker.join()
     print("rank:", rank, "sampling time:", total/(args.num_epochs - skip_epoch))
+    print("train:", rank, train_time/(args.num_epochs - skip_epoch))
     cleanup()
   
 
@@ -270,7 +271,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_hidden', default=16, type=int, help='Hidden size')
     parser.add_argument('--dropout', type=float, default=0.5)
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
-    parser.add_argument('--num_epochs', default=6, type=int, help='Epochs')
+    parser.add_argument('--num_epochs', default=10, type=int, help='Epochs')
     parser.add_argument('--lr', type=float, default=0.003)
     args = parser.parse_args()
     

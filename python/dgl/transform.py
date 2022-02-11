@@ -2053,7 +2053,7 @@ def compact_graphs(graphs, always_preserve=None, copy_ndata=True, copy_edata=Tru
 
     return new_graphs
 
-def to_block(g, dst_nodes=None, include_dst_in_src=True):
+def to_block(g, dst_nodes=None, include_dst_in_src=True, min_vids=None):
     """Convert a graph into a bipartite-structured *block* for message passing.
 
     A block is a graph consisting of two sets of nodes: the
@@ -2215,8 +2215,9 @@ def to_block(g, dst_nodes=None, include_dst_in_src=True):
         if g._graph.ctx != d.ctx:
             raise ValueError('g and dst_nodes need to have the same context.')
 
+    min_vids = F.to_dgl_nd(min_vids)
     new_graph_index, src_nodes_nd, induced_edges_nd = _CAPI_DGLToBlock(
-        g._graph, dst_node_ids_nd, include_dst_in_src)
+        g._graph, dst_node_ids_nd, include_dst_in_src, min_vids)
 
     # The new graph duplicates the original node types to SRC and DST sets.
     new_ntypes = (g.ntypes, g.ntypes)

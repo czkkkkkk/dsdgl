@@ -48,7 +48,7 @@ class NeighborSampler(object):
     '''
     def sample_blocks(self, g, seeds, exclude_eids=None):
         blocks = []
-        is_local = False
+        is_local = True
         for fanout in self.fanouts:
             # For each seed node, sample ``fanout`` neighbors.
             frontier = self.sample_neighbors(self.g, self.num_vertices,
@@ -56,12 +56,22 @@ class NeighborSampler(object):
                                              seeds, fanout, self.global_nid_map, is_local = is_local)
             is_local = False
             # Then we compact the frontier into a bipartite graph for message passing.
-            block = dgl.to_block(frontier, seeds)
-            # block = ds.to_block(frontier, seeds)
+            block = dgl.to_block(frontier, seeds, min_vids = self.device_min_vids)
             # Obtain the seed nodes for next layer.
             seeds = block.srcdata[dgl.NID]
+            # self.check(seeds, self.device_min_vids)
             blocks.insert(0, block)
         return blocks
+    
+    def check(self, seeds, min_vids):
+        cur_part_id = 0
+        for vid in seeds:
+            assert(vid < min_vids[-1])
+            assert(vid >= min_vids[cur_part_id])
+            if vid >= min_vids[cur_part_id + 1]:
+                cur_part_id += 1
+            if vid < min_vids[cur_part_id]:
+                print("error")
 
 def run(rank, args, train_label):
     print('Start rank', rank, 'with args:', args)
@@ -131,6 +141,7 @@ def run(rank, args, train_label):
     loss_fcn = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     
+    th.cuda.synchronize()
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
@@ -145,18 +156,13 @@ def run(rank, args, train_label):
         start_ts = time.time()
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
             th.cuda.synchronize()
-
-            batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, seeds, min_vids)
-
             after_sampling_ts = time.time()
             sampling_time += after_sampling_ts - start_ts
             # print("start loading")
             batch_inputs, batch_labels = dgl.ds.load_subtensor(train_feature, train_label, input_nodes, seeds, min_vids)
-
             th.cuda.synchronize()
             after_loading_ts = time.time()
             loading_time += after_loading_ts - after_sampling_ts
-
             batch_pred = model(blocks, batch_inputs)
             loss = loss_fcn(batch_pred, batch_labels)
             optimizer.zero_grad()
