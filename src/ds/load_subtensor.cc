@@ -53,7 +53,12 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   CUDACHECK(cudaStreamSynchronize(s));
 
   IdArray frontier, host_recv_offset;
-  Shuffle(input_nodes, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset);
+  int use_nccl = GetEnvParam("USE_NCCL", 0);
+  if (use_nccl) {
+    Shuffle(input_nodes, host_send_offset, send_sizes, rank, world_size, context->nccl_comm_load, &frontier, &host_recv_offset, false);
+  } else {
+    ShuffleV2(input_nodes, send_offset, rank, world_size, &frontier, &host_recv_offset);
+  }
   CUDACHECK(cudaStreamSynchronize(s));
 
   ConvertGidToLid(frontier, min_vids, rank);
@@ -64,7 +69,11 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   CUDACHECK(cudaStreamSynchronize(s));
 
   IdArray features_recv;
-  Reshuffle(features_to_send, features->shape[1], n_input_nodes, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &features_recv);
+  if (use_nccl) {
+    Reshuffle(features_to_send, features->shape[1], n_input_nodes, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm_load, &features_recv, false);
+  } else {
+    ReshuffleV2(features_to_send, features->shape[1], host_recv_offset, rank, world_size, &features_recv);
+  }
   CUDACHECK(cudaStreamSynchronize(s));
 
   *rv = features_recv;

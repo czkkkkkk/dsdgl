@@ -109,7 +109,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   IdArray frontier, host_recv_offset;
   int use_nccl = GetEnvParam("USE_NCCL", 0);
   if(use_nccl) {
-    Shuffle(seeds, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset);
+    Shuffle(seeds, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset, true);
   } else {
     ShuffleV2(seeds, send_offset, rank, world_size, &frontier, &host_recv_offset);
   }
@@ -123,7 +123,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   
   IdArray reshuffled_neighbors;
   if(use_nccl) {
-    Reshuffle(neighbors, fanout, n_seeds, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &reshuffled_neighbors);
+    Reshuffle(neighbors, fanout, n_seeds, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &reshuffled_neighbors, true);
   } else {
     ReshuffleV2(neighbors, fanout, host_recv_offset, rank, world_size, &reshuffled_neighbors);
   }

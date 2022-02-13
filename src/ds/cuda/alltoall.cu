@@ -64,12 +64,13 @@ struct CopyArgs {
         prev_done(prev_done) {}
   int tid, n_threads, group_size;
   // Pack 64 bits currently
-  int64_t *input, *output;
-  int64_t *my_recvbuff, *next_recvbuff;
+  void *input, *output;
+  void *my_recvbuff, *next_recvbuff;
   int send_size, recv_size;
   WaitFlag ready, done, next_ready, prev_done;
 };
 
+template<typename DataType>
 __device__
 void _Copy(CopyArgs args) {
   if (args.tid % args.group_size == 0) {
@@ -80,8 +81,8 @@ void _Copy(CopyArgs args) {
   int tid = args.tid;
   int buff_ptr = args.tid % args.group_size;
   while(tid < args.send_size) {
-    int64_t val = vFetch(args.input + tid);
-    vStore(args.next_recvbuff + buff_ptr, val);
+    DataType val = vFetch((DataType*)args.input + tid);
+    vStore((DataType*)args.next_recvbuff + buff_ptr, val);
     // args.next_recvbuff[buff_ptr] = args.input[tid];
     tid += args.n_threads;
     buff_ptr += args.group_size;
@@ -95,8 +96,8 @@ void _Copy(CopyArgs args) {
   tid = args.tid;
   buff_ptr = args.tid % args.group_size;
   while(tid < args.recv_size) {
-    int64_t val = vFetch(args.my_recvbuff + buff_ptr);
-    vStore(args.output + tid, val);
+    DataType val = vFetch((DataType*)args.my_recvbuff + buff_ptr);
+    vStore((DataType*)args.output + tid, val);
     // args.output[tid] = args.my_recvbuff[buff_ptr]; 
     tid += args.n_threads;
     buff_ptr += args.group_size;
@@ -121,22 +122,24 @@ void _CopySendSize(int64_t* send_sizes, int64_t* recv_sizes, int peer_id, int lo
   copy_args.output = recv_sizes + peer_id;
   copy_args.my_recvbuff = (int64_t*) conn_info->my_recv_buff;
   copy_args.next_recvbuff = (int64_t*) conn_info->next_recv_buff;
-  _Copy(copy_args);
+  _Copy<int64_t>(copy_args);
 }
 
+template <typename DataType>
 __device__
-void _CopyData(int64_t* input, int64_t send_size, int64_t* output, int64_t recv_size, int tid, int n_threads, int group_size, ConnInfo* conn_info) {
+void _CopyData(DataType* input, int64_t send_size, DataType* output, int64_t recv_size, int tid, int n_threads, int group_size, ConnInfo* conn_info) {
   CopyArgs copy_args(tid, n_threads, conn_info->my_ready, conn_info->my_done, conn_info->next_ready, conn_info->prev_done);
   copy_args.group_size = group_size;
   copy_args.send_size = send_size;
   copy_args.recv_size = recv_size;
   copy_args.input = input;
   copy_args.output = output;
-  copy_args.my_recvbuff = (int64_t*) conn_info->my_recv_buff;
-  copy_args.next_recvbuff = (int64_t*) conn_info->next_recv_buff;
-  _Copy(copy_args);
+  copy_args.my_recvbuff = conn_info->my_recv_buff;
+  copy_args.next_recvbuff = conn_info->next_recv_buff;
+  _Copy<DataType>(copy_args);
 }
 
+template <typename DataType>
 __global__
 void _AlltoallKernel(AlltoallArgs args) {
   int bid = blockIdx.x;
@@ -162,15 +165,15 @@ void _AlltoallKernel(AlltoallArgs args) {
     }
   }
   __syncthreads();
-  int64_t* sendbuff = (int64_t*) args.sendbuff + send_offset[peer_id];
-  int64_t* recvbuff = (int64_t*) args.recvbuff + recv_offset[peer_id];
+  DataType* sendbuff = (DataType*) args.sendbuff + send_offset[peer_id];
+  DataType* recvbuff = (DataType*) args.recvbuff + recv_offset[peer_id];
   int64_t send_size = send_offset[peer_id+1] - send_offset[peer_id];
   int64_t recv_size = recv_offset[peer_id+1] - recv_offset[peer_id];
   int global_tid = bid * args.n_threads_per_conn + local_tid;
   _CopyData(sendbuff, send_size, recvbuff, recv_size, global_tid, gridDim.x * args.n_threads_per_conn, args.n_threads_per_conn, conn_info);
 }
 
-void Alltoall(void* sendbuff, void* send_offset, void* recvbuff, void* recv_offset, CommInfo* comm_info, int rank, int world_size) {
+void Alltoall(void* sendbuff, void* send_offset, void* recvbuff, void* recv_offset, CommInfo* comm_info, int rank, int world_size, int bits) {
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   AlltoallArgs args;
   args.rank = rank;
@@ -184,10 +187,11 @@ void Alltoall(void* sendbuff, void* send_offset, void* recvbuff, void* recv_offs
   args.recv_offset = recv_offset;
   dim3 grid_dim(comm_info->n_block);
   dim3 block_dim(n_threads);
-  void *kargs[] = {&args};
-  cudaError_t e = cudaLaunchKernel((void *)_AlltoallKernel,
-                                  grid_dim, block_dim, kargs, 0, thr_entry->stream);
-  CUDACHECKERR(e);
+  if (bits == 64) {
+    _AlltoallKernel<int64_t><<<grid_dim, block_dim, 0, thr_entry->stream>>>(args);
+  } else {
+    _AlltoallKernel<int32_t><<<grid_dim, block_dim, 0, thr_entry->stream>>>(args);
+  }
   CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
 }
 

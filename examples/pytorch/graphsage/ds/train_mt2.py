@@ -52,7 +52,7 @@ class NeighborSampler(object):
     '''
     def sample_blocks(self, g, seeds, exclude_eids=None):
         blocks = []
-        is_local = False
+        is_local = True
         for fanout in self.fanouts:
             # For each seed node, sample ``fanout`` neighbors.
             frontier = self.sample_neighbors(self.g, self.num_vertices,
@@ -61,8 +61,7 @@ class NeighborSampler(object):
             
             is_local = False
             # Then we compact the frontier into a bipartite graph for message passing.
-            block = dgl.to_block(frontier, seeds)
-            # block = ds.to_block(frontier, seeds)
+            block = dgl.to_block(frontier, seeds, min_vids = self.device_min_vids)
             # Obtain the seed nodes for next layer.
             seeds = block.srcdata[dgl.NID]
             blocks.insert(0, block)
@@ -258,7 +257,7 @@ def run(rank, args, train_label):
         print("rank:", rank, toc - tic)
     sample_worker.join()
     loader_worker.join()
-    print("rank:", rank, "sampling time:", total/(args.num_epochs - skip_epoch))
+    print("rank:", rank, "end2end time:", total/(args.num_epochs - skip_epoch))
     print("train:", rank, train_time/(args.num_epochs - skip_epoch))
     cleanup()
   

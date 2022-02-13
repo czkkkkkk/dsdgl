@@ -112,8 +112,8 @@ class Sampler(Thread):
           # batch_labels = th.ones([seeds.shape[0]], dtype=self.labels.dtype, device=self.rank)
           batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
           s.synchronize()
-          self.pc_queue.put((batch_inputs, batch_labels, blocks))
-        self.pc_queue.stop_produce(1)
+          #self.pc_queue.put((batch_inputs, batch_labels, blocks))
+        #self.pc_queue.stop_produce(1)
 
 class Trainer(Thread):
   def __init__(self, model, loss_fcn, optimizer, pc_queue, rank):
@@ -227,36 +227,36 @@ def run(rank, args, train_label):
     dgl.ds.set_device_thread_local_stream(device, s)
 
     sample_worker.start()
-    train_time = 0
-    for epoch in range(args.num_epochs):
-        tic = time.time()
-        step = 0
-        while True:
-          batch_data = data_buffer.get()
-          if batch_data is None:
-            break
-          begin = time.time()
-          with th.cuda.stream(s):
-            batch_inputs = batch_data[0]
-            batch_labels = batch_data[1]
-            blocks = batch_data[2]
-            batch_pred = model(blocks, batch_inputs)
-            loss = loss_fcn(batch_pred, batch_labels)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            s.synchronize()
-            th.distributed.barrier()
-          step += time.time() - begin
+    # train_time = 0
+    # for epoch in range(args.num_epochs):
+    #     tic = time.time()
+    #     step = 0
+    #     while True:
+    #       batch_data = data_buffer.get()
+    #       if batch_data is None:
+    #         break
+    #       begin = time.time()
+    #       with th.cuda.stream(s):
+    #         batch_inputs = batch_data[0]
+    #         batch_labels = batch_data[1]
+    #         blocks = batch_data[2]
+    #         batch_pred = model(blocks, batch_inputs)
+    #         loss = loss_fcn(batch_pred, batch_labels)
+    #         optimizer.zero_grad()
+    #         loss.backward()
+    #         optimizer.step()
+    #         s.synchronize()
+    #         th.distributed.barrier()
+    #       step += time.time() - begin
 
-        toc = time.time()
-        if epoch >= skip_epoch:
-            total += (toc - tic)
-            train_time += step
-        print("rank:", rank, toc - tic)
+    #     toc = time.time()
+    #     if epoch >= skip_epoch:
+    #         total += (toc - tic)
+    #         train_time += step
+    #     print("rank:", rank, toc - tic)
     sample_worker.join()
     print("rank:", rank, "sampling time:", total/(args.num_epochs - skip_epoch))
-    print("train:", rank, train_time/(args.num_epochs - skip_epoch))
+    #print("train:", rank, train_time/(args.num_epochs - skip_epoch))
     cleanup()
   
 
@@ -265,8 +265,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='GCN')
     register_data_args(parser)
     parser.add_argument('--graph_name', default='test', type=str, help='graph name')
-    parser.add_argument('--part_config', default='./data-1/reddit.json', type=str, help='The path to the partition config file')
-    parser.add_argument('--n_ranks', default=1, type=int, help='Number of ranks')
+    parser.add_argument('--part_config', default='./data-2/reddit.json', type=str, help='The path to the partition config file')
+    parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
     parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
     parser.add_argument('--num_hidden', default=16, type=int, help='Hidden size')
     parser.add_argument('--dropout', type=float, default=0.5)
