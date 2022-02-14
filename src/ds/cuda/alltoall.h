@@ -37,13 +37,12 @@ void CustomizedAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, in
  * 
  * @param input input on GPU
  * @param send_offset send_offset on GPU
- * @param send_sizes send_size on GPU
  * @param rank
  * @param world_size
  * 
- * @return Pair of received buff and host_recv_offset
+ * @return Tuple of (received buff, recv_sizes, recv_offset)
  */
-std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, IdArray send_sizes, int expand_size, int rank, int world_size);
+std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size);
 
 }
 }

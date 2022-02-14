@@ -11,6 +11,7 @@
 #include "../graph/unit_graph.h"
 #include "context.h"
 #include "cuda/ds_kernel.h"
+#include "cuda/alltoall.h"
 #include "cuda/cuda_utils.h"
 #include <chrono>
 #include <thread>
@@ -47,34 +48,18 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
 
   IdArray send_sizes, send_offset;
   Cluster(rank, input_nodes, min_vids, world_size, &send_sizes, &send_offset);
-  CUDACHECK(cudaStreamSynchronize(s));
 
-  auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}), s);
-  CUDACHECK(cudaStreamSynchronize(s));
-
-  IdArray frontier, host_recv_offset;
-  int use_nccl = GetEnvParam("USE_NCCL", 0);
-  if (use_nccl) {
-    Shuffle(input_nodes, host_send_offset, send_sizes, rank, world_size, context->nccl_comm_load, &frontier, &host_recv_offset, false);
-  } else {
-    ShuffleV2(input_nodes, send_offset, rank, world_size, &frontier, &host_recv_offset);
-  }
-  CUDACHECK(cudaStreamSynchronize(s));
+  IdArray frontier, recv_offset;
+  std::tie(frontier, recv_offset) = Alltoall(input_nodes, send_offset, 1, rank, world_size);
 
   ConvertGidToLid(frontier, min_vids, rank);
-  CUDACHECK(cudaStreamSynchronize(s));
-
   IdArray features_to_send;
   LoadFeature(frontier, features, &features_to_send);
-  CUDACHECK(cudaStreamSynchronize(s));
 
-  IdArray features_recv;
-  if (use_nccl) {
-    Reshuffle(features_to_send, features->shape[1], n_input_nodes, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm_load, &features_recv, false);
-  } else {
-    ReshuffleV2(features_to_send, features->shape[1], host_recv_offset, rank, world_size, &features_recv);
-  }
-  CUDACHECK(cudaStreamSynchronize(s));
+  IdArray features_recv, feature_recv_offset;
+  std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, features->shape[1], rank, world_size);
+  
+  features_recv = Remap(features_recv, idx, features->shape[1]);
 
   *rv = features_recv;
 });

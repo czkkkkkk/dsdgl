@@ -246,24 +246,6 @@ void SampleNeighborsV2(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray*
   }
 }
 
-void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_send_offset, IdArray host_shuffle_recv_offset, int rank, int world_size, ncclComm_t nccl_comm, IdArray* reshuffled_neighbors, bool is_sample) {
-  int shuffle_send_size = host_shuffle_send_offset.Ptr<IdType>()[world_size];
-  *reshuffled_neighbors = IdArray::Empty({shuffle_send_size * fanout}, neighbors->dtype, neighbors->ctx);
-  AllToAll(neighbors, host_shuffle_recv_offset, *reshuffled_neighbors, host_shuffle_send_offset, fanout, rank, world_size, nccl_comm, is_sample);
-}
-
-void ReshuffleV2(IdArray neighbors, int fanout, IdArray host_shuffle_recv_offset, int rank, int world_size, IdArray* reshuffled_neighbors) {
-  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
-  auto dgl_context = neighbors->ctx;
-  auto* host_shuffle_recv_offset_ptr = host_shuffle_recv_offset.Ptr<IdType>();
-  for(int i = 0; i <= world_size; ++i) {
-    host_shuffle_recv_offset_ptr[i] *= fanout;
-  }
-  auto shuffle_recv_offset = host_shuffle_recv_offset.CopyTo(dgl_context, thr_entry->stream);
-  IdArray recv_offset;
-  AllToAllV2(neighbors, shuffle_recv_offset, reshuffled_neighbors, &recv_offset, rank, world_size, "RESHUFFLEV2");
-}
-
 template <class T>
 __global__
 void _RemapKernel(T* dst, T* src, IdType* index, int size, int fanout) {

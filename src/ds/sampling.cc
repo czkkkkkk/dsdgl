@@ -13,6 +13,7 @@
 #include "cuda/ds_kernel.h"
 #include "cuda/cuda_utils.h"
 #include "./memory_manager.h"
+#include "./cuda/alltoall.h"
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
@@ -100,38 +101,20 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   
   IdArray send_sizes, send_offset;
   Cluster(rank, seeds, min_vids, world_size, &send_sizes, &send_offset);
-  CUDACHECK(cudaStreamSynchronize(s));
-  
-  auto host_send_sizes = send_sizes.CopyTo(DLContext({kDLCPU, 0}), s);
-  auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}), s);
-  CUDACHECK(cudaStreamSynchronize(s));
 
-  IdArray frontier, host_recv_offset;
-  int use_nccl = GetEnvParam("USE_NCCL", 0);
-  if(use_nccl) {
-    Shuffle(seeds, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset, true);
-  } else {
-    ShuffleV2(seeds, send_offset, rank, world_size, &frontier, &host_recv_offset);
-  }
-  CUDACHECK(cudaStreamSynchronize(s));
+  IdArray frontier, recv_offset;
+  std::tie(frontier, recv_offset) = Alltoall(seeds, send_offset,  1, rank, world_size);
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray neighbors, edges;
   Sample(frontier, hg.sptr(), fanout, replace, &neighbors, &edges);
-  CUDACHECK(cudaStreamSynchronize(s));
-  // ConvertLidToGid(neighbors, global_nid_map);
   
-  IdArray reshuffled_neighbors;
-  if(use_nccl) {
-    Reshuffle(neighbors, fanout, n_seeds, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &reshuffled_neighbors, true);
-  } else {
-    ReshuffleV2(neighbors, fanout, host_recv_offset, rank, world_size, &reshuffled_neighbors);
-  }
-  CUDACHECK(cudaStreamSynchronize(s));
-  
-  // ConvertGidToLid(seeds, min_vids, rank);
-  HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, reshuffled_neighbors);
-  CUDACHECK(cudaStreamSynchronize(s));
+  IdArray reshuffled_neighbors, reshuffle_recv_offset;
+  std::tie(reshuffled_neighbors, reshuffle_recv_offset) = Alltoall(neighbors, recv_offset, fanout, rank, world_size);
+
+  reshuffled_neighbors = Remap(reshuffled_neighbors, idx, fanout);
+
+  HeteroGraphPtr subg = CreateCOO(num_vertices, original_seeds, fanout, reshuffled_neighbors);
   
   MemoryManager::Global()->ClearUseCount();
   *rv = HeteroGraphRef(subg);

@@ -51,31 +51,28 @@ void Initialize(int rank, int world_size) {
   cudaSetDevice(rank);
 
   int use_nccl = GetEnvParam("USE_NCCL", 0);
-  if(!use_nccl) {
-    wrapNvmlInit();
+  wrapNvmlInit();
 
-    // Build our communication environment
-    SetupGpuCommunicationEnv();
-  } else {
-    // Build NCCL environment
-    ncclUniqueId nccl_id, nccl_id_load;
-    if (rank == 0) {
-      ncclGetUniqueId(&nccl_id);
-      ncclGetUniqueId(&nccl_id_load);
-    }
-    std::string nccl_id_str = NCCLIdToString(nccl_id);
-    std::string nccl_id_load_str = NCCLIdToString(nccl_id_load);
-    ds_context->coordinator->Broadcast(nccl_id_str);
-    nccl_id = StringToNCCLId(nccl_id_str);
-    ds_context->coordinator->Broadcast(nccl_id_load_str);
-    nccl_id_load = StringToNCCLId(nccl_id_load_str);
-
-    if(world_size >= 1) {
-      ncclCommInitRank(&ds_context->nccl_comm, world_size, nccl_id, rank);
-      ncclCommInitRank(&ds_context->nccl_comm_load, world_size, nccl_id_load, rank);
-    }
-    LOG(INFO) << "Rank " + std::to_string(rank) + " successfully builds nccl communicator";
+  // Build our communication environment
+  SetupGpuCommunicationEnv();
+  // Build NCCL environment
+  ncclUniqueId nccl_id, nccl_id_load;
+  if (rank == 0) {
+    ncclGetUniqueId(&nccl_id);
+    ncclGetUniqueId(&nccl_id_load);
   }
+  std::string nccl_id_str = NCCLIdToString(nccl_id);
+  std::string nccl_id_load_str = NCCLIdToString(nccl_id_load);
+  ds_context->coordinator->Broadcast(nccl_id_str);
+  nccl_id = StringToNCCLId(nccl_id_str);
+  ds_context->coordinator->Broadcast(nccl_id_load_str);
+  nccl_id_load = StringToNCCLId(nccl_id_load_str);
+
+  if(world_size >= 1) {
+    ncclCommInitRank(&ds_context->nccl_comm, world_size, nccl_id, rank);
+    ncclCommInitRank(&ds_context->nccl_comm_load, world_size, nccl_id_load, rank);
+  }
+  LOG(INFO) << "Rank " + std::to_string(rank) + " successfully builds nccl communicator";
 }
 
 DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")
