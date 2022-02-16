@@ -94,16 +94,14 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   }
 
   if (is_local) {
-    ConvertLidToGid(seeds, global_nid_map);
+    seeds = Partition(seeds, min_vids);
+    CUDACHECK(cudaStreamSynchronize(s));
   }
-  IdArray idx;
-  IdArray original_seeds = seeds.Clone(s);
-  // std::tie(seeds, idx) = Sort(seeds);
-
+  
   IdArray send_sizes, send_offset;
-  std::tie(seeds, idx, send_sizes, send_offset) = Partition(seeds, min_vids, world_size);
+  Cluster(rank, seeds, min_vids, world_size, &send_sizes, &send_offset);
   CUDACHECK(cudaStreamSynchronize(s));
-  // Cluster(seeds, min_vids, world_size, &send_sizes, &send_offset);
+  
   auto host_send_sizes = send_sizes.CopyTo(DLContext({kDLCPU, 0}), s);
   auto host_send_offset = send_offset.CopyTo(DLContext({kDLCPU, 0}), s);
   CUDACHECK(cudaStreamSynchronize(s));
@@ -111,7 +109,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   IdArray frontier, host_recv_offset;
   int use_nccl = GetEnvParam("USE_NCCL", 0);
   if(use_nccl) {
-    Shuffle(seeds, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset);
+    Shuffle(seeds, host_send_offset, send_sizes, rank, world_size, context->nccl_comm, &frontier, &host_recv_offset, true);
   } else {
     ShuffleV2(seeds, send_offset, rank, world_size, &frontier, &host_recv_offset);
   }
@@ -125,19 +123,14 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   
   IdArray reshuffled_neighbors;
   if(use_nccl) {
-    Reshuffle(neighbors, fanout, n_seeds, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &reshuffled_neighbors);
+    Reshuffle(neighbors, fanout, n_seeds, host_send_offset, host_recv_offset, rank, world_size, context->nccl_comm, &reshuffled_neighbors, true);
   } else {
     ReshuffleV2(neighbors, fanout, host_recv_offset, rank, world_size, &reshuffled_neighbors);
   }
   CUDACHECK(cudaStreamSynchronize(s));
-
-  reshuffled_neighbors = Remap(reshuffled_neighbors, idx, fanout);
-  CUDACHECK(cudaStreamSynchronize(s));
-
-  // LOG(INFO) << "Reshuffled neibhgors: " << ToDebugString(reshuffled_neighbors);
   
   // ConvertGidToLid(seeds, min_vids, rank);
-  HeteroGraphPtr subg = CreateCOO(num_vertices, original_seeds, fanout, reshuffled_neighbors);
+  HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, reshuffled_neighbors);
   CUDACHECK(cudaStreamSynchronize(s));
   
   MemoryManager::Global()->ClearUseCount();

@@ -19,6 +19,7 @@ struct DSContext {
   int world_size;
   int rank;
   ncclComm_t nccl_comm;
+  ncclComm_t nccl_comm_load;
   std::unique_ptr<Coordinator> coordinator;
   CommInfo comm_info;
 

@@ -34,7 +34,8 @@ std::tuple<HeteroGraphPtr, std::vector<IdArray>, std::vector<IdArray>>
 CudaToBlock(
     HeteroGraphPtr graph,
     const std::vector<IdArray>& rhs_nodes,
-    const bool include_rhs_in_lhs);
+    const bool include_rhs_in_lhs,
+    IdArray min_vids = nullptr);
 
 }  // namespace cuda
 }  // namespace transform

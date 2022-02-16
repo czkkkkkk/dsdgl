@@ -7,6 +7,7 @@
 #include <dgl/array.h>
 #include <dgl/aten/csr.h>
 #include "../../runtime/cuda/cuda_common.h"
+#include "cuda_utils.h"
 
 using namespace dgl;
 using namespace dgl::aten;
@@ -33,9 +34,11 @@ void ConvertLidToGid(IdArray local_ids, IdArray global_nid_map);
 
 std::tuple<IdArray, IdArray, IdArray, IdArray> Partition(IdArray seeds, IdArray min_vids, int world_size);
 
-void Cluster(IdArray seeds, IdArray min_vids, int world_size, IdArray* send_sizes, IdArray* dev_send_offset);
+IdArray Partition(IdArray seeds, IdArray min_vids);
 
-void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int rank, int world_size, ncclComm_t nccl_comm, IdArray* frontier, IdArray* host_recv_offset);
+void Cluster(int rank, IdArray seeds, IdArray min_vids, int world_size, IdArray* send_sizes, IdArray* send_offset);
+
+void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int rank, int world_size, ncclComm_t nccl_comm, IdArray* frontier, IdArray* host_recv_offset, bool is_sample);
 
 void ShuffleV2(IdArray seeds, IdArray send_offset, int rank, int world_size, IdArray* frontier, IdArray* host_recv_offset);
 
@@ -43,7 +46,7 @@ void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* n
 
 void SampleNeighborsV2(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges);
 
-void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_send_offset, IdArray host_shuffle_recv_offset, int rank, int world_size, ncclComm_t nccl_comm, IdArray* reshuffled_neighbors);
+void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_send_offset, IdArray host_shuffle_recv_offset, int rank, int world_size, ncclComm_t nccl_comm, IdArray* reshuffled_neighbors, bool is_sample);
 
 void ReshuffleV2(IdArray neighbors, int fanout, IdArray host_shuffle_recv_offset, int rank, int world_size, IdArray* reshuffled_neighbors);
 

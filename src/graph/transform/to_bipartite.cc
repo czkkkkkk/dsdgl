@@ -123,9 +123,27 @@ ToBlock<kDLCPU, int32_t>(HeteroGraphPtr graph,
 
 template<>
 std::tuple<HeteroGraphPtr, std::vector<IdArray>, std::vector<IdArray>>
+ToBlock<kDLCPU, int32_t>(HeteroGraphPtr graph,
+                         const std::vector<IdArray> &rhs_nodes,
+                         bool include_rhs_in_lhs,
+                         IdArray min_vids) {
+  return ToBlockCPU<int32_t>(graph, rhs_nodes, include_rhs_in_lhs);
+}
+
+template<>
+std::tuple<HeteroGraphPtr, std::vector<IdArray>, std::vector<IdArray>>
 ToBlock<kDLCPU, int64_t>(HeteroGraphPtr graph,
                          const std::vector<IdArray> &rhs_nodes,
                          bool include_rhs_in_lhs) {
+  return ToBlockCPU<int64_t>(graph, rhs_nodes, include_rhs_in_lhs);
+}
+
+template<>
+std::tuple<HeteroGraphPtr, std::vector<IdArray>, std::vector<IdArray>>
+ToBlock<kDLCPU, int64_t>(HeteroGraphPtr graph,
+                         const std::vector<IdArray> &rhs_nodes,
+                         bool include_rhs_in_lhs,
+                         IdArray min_vids) {
   return ToBlockCPU<int64_t>(graph, rhs_nodes, include_rhs_in_lhs);
 }
 
@@ -134,6 +152,7 @@ DGL_REGISTER_GLOBAL("transform._CAPI_DGLToBlock")
     const HeteroGraphRef graph_ref = args[0];
     const std::vector<IdArray> &rhs_nodes = ListValueToVector<IdArray>(args[1]);
     const bool include_rhs_in_lhs = args[2];
+    const IdArray min_vids = args[3];
 
     HeteroGraphPtr new_graph;
     std::vector<IdArray> lhs_nodes;
@@ -142,7 +161,7 @@ DGL_REGISTER_GLOBAL("transform._CAPI_DGLToBlock")
     ATEN_XPU_SWITCH_CUDA(graph_ref->Context().device_type, XPU, "ToBlock", {
       ATEN_ID_TYPE_SWITCH(graph_ref->DataType(), IdType, {
       std::tie(new_graph, lhs_nodes, induced_edges) = ToBlock<XPU, IdType>(
-          graph_ref.sptr(), rhs_nodes, include_rhs_in_lhs);
+        graph_ref.sptr(), rhs_nodes, include_rhs_in_lhs, min_vids);
       });
     });
 
