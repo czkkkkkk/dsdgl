@@ -90,7 +90,7 @@ void _TestAlltoall(int rank, int world_size, const Vec3d<T>& input_all, int expa
   IdArray sendbuff = IdArray::FromVector(host_sendbuff).CopyTo({kDLGPU, rank}, stream);
   IdArray send_offset = IdArray::FromVector(host_send_offset).CopyTo({kDLGPU, rank}, stream);
   IdArray recvbuff, recv_offset;
-  std::tie(recvbuff, recv_offset) = Alltoall(sendbuff, send_offset, expand_size, rank, world_size);
+  std::tie(recvbuff, recv_offset) = Alltoall(sendbuff, send_offset, expand_size, rank, world_size, DSContext::Global()->nccl_comm);
   CheckVectorEq(recv_offset.ToVector<int64_t>(), exp_recv_offset);
   CheckVectorEq(recvbuff.ToVector<T>(), exp_recvbuff);
 }
@@ -104,7 +104,7 @@ TEST(DSSampling, Alltoall64bits) {
   SetEnvParam("USE_NCCL", 0);
   if(world_size == 2) {
     Vec3d<IdType> input_all = {{{1, 3}, {3, 5}}, {{1}, {100}}};
-    // _TestAlltoall(rank, world_size, input_all);
+    _TestAlltoall(rank, world_size, input_all);
   }
   if(world_size == 3) {
     Vec3d<IdType> input_all = {{{1, 3}, {3, 5}, {3, 8}}, {{1}, {100}, {100}}, {{1}, {100}, {100}}};
@@ -189,13 +189,13 @@ void _AlltoallBenchmark(int rank, int world_size, int size, int expand_size=1) {
   IdArray recvbuff, recv_offset;
   // warmup
   for(int i = 0; i < 5; ++i) {
-    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, expand_size, rank, world_size);
+    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, expand_size, rank, world_size, DSContext::Global()->nccl_comm);
   }
   CUDACHECK(cudaDeviceSynchronize());
   int num_iters = 20;
   auto start_ts = std::chrono::high_resolution_clock::now();
   for(int i = 0; i < num_iters; ++i) {
-    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, expand_size, rank, world_size);
+    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, expand_size, rank, world_size, DSContext::Global()->nccl_comm);
   }
   CUDACHECK(cudaDeviceSynchronize());
   auto end_ts = std::chrono::high_resolution_clock::now();

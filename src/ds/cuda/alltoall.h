@@ -1,9 +1,11 @@
 #ifndef DGL_DS_CUDA_ALLTOALL_H_
 #define DGL_DS_CUDA_ALLTOALL_H_
 
-#include "../comm/comm_info.h"
-
 #include <dgl/array.h>
+
+#include "../comm/comm_info.h"
+#include "./ds_kernel.h"
+
 
 namespace dgl {
 namespace ds {
@@ -13,8 +15,10 @@ struct AlltoallArgs {
   int n_bytes;
   CommInfo* comm_info;
   int n_threads_per_conn;
-  void *sendbuff, *send_offset;
-  void *recvbuff, *recv_offset;
+  void *sendbuff;
+  IdType *send_offset;
+  void *recvbuff;
+  IdType *recv_offset;
 };
 
 /**
@@ -42,7 +46,8 @@ void CustomizedAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, in
  * 
  * @return Tuple of (received buff, recv_sizes, recv_offset)
  */
-std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size);
+// FIXME: wrap the low-level communicator
+std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm=nullptr);
 
 }
 }

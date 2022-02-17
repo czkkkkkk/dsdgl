@@ -36,6 +36,8 @@ std::tuple<IdArray, IdArray, IdArray, IdArray> Partition(IdArray seeds, IdArray 
 
 IdArray Partition(IdArray seeds, IdArray min_vids);
 
+void Cluster(int rank, IdArray seeds, IdArray min_vids, int world_size, IdArray* send_sizes, IdArray* send_offset);
+
 void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges);
 
 void SampleNeighborsV2(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges);

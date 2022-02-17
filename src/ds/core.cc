@@ -90,6 +90,9 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetStream")
   thr_entry->stream = (cudaStream_t)s;
   LOG(INFO) << "Set local stream: " << thr_entry->stream;
   CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
+  
+  // Create data copy stream to pipeline with kernels
+  CUDACHECK(cudaStreamCreate(&thr_entry->data_copy_stream));
 });
 
 }

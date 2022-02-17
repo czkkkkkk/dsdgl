@@ -50,17 +50,15 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   Cluster(rank, input_nodes, min_vids, world_size, &send_sizes, &send_offset);
 
   IdArray frontier, recv_offset;
-  std::tie(frontier, recv_offset) = Alltoall(input_nodes, send_offset, 1, rank, world_size);
+  std::tie(frontier, recv_offset) = Alltoall(input_nodes, send_offset, 1, rank, world_size, context->nccl_comm_load);
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray features_to_send;
   LoadFeature(frontier, features, &features_to_send);
 
   IdArray features_recv, feature_recv_offset;
-  std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, features->shape[1], rank, world_size);
+  std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, features->shape[1], rank, world_size, context->nccl_comm_load);
   
-  features_recv = Remap(features_recv, idx, features->shape[1]);
-
   *rv = features_recv;
 });
 

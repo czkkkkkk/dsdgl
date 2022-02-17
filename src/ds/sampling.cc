@@ -103,18 +103,16 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   Cluster(rank, seeds, min_vids, world_size, &send_sizes, &send_offset);
 
   IdArray frontier, recv_offset;
-  std::tie(frontier, recv_offset) = Alltoall(seeds, send_offset,  1, rank, world_size);
+  std::tie(frontier, recv_offset) = Alltoall(seeds, send_offset,  1, rank, world_size, context->nccl_comm);
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray neighbors, edges;
   Sample(frontier, hg.sptr(), fanout, replace, &neighbors, &edges);
   
   IdArray reshuffled_neighbors, reshuffle_recv_offset;
-  std::tie(reshuffled_neighbors, reshuffle_recv_offset) = Alltoall(neighbors, recv_offset, fanout, rank, world_size);
+  std::tie(reshuffled_neighbors, reshuffle_recv_offset) = Alltoall(neighbors, recv_offset, fanout, rank, world_size, context->nccl_comm);
 
-  reshuffled_neighbors = Remap(reshuffled_neighbors, idx, fanout);
-
-  HeteroGraphPtr subg = CreateCOO(num_vertices, original_seeds, fanout, reshuffled_neighbors);
+  HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, reshuffled_neighbors);
   
   MemoryManager::Global()->ClearUseCount();
   *rv = HeteroGraphRef(subg);
