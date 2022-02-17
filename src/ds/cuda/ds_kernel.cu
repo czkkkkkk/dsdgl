@@ -60,6 +60,7 @@ void ConvertGidToLid(IdArray global_ids, IdArray min_vids, int rank) {
   auto* min_vids_ptr = min_vids.Ptr<IdType>();
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   _GidToLidKernel<<<BLOCK_NUM, BLOCK_SIZE, 0, thr_entry->stream>>>(global_ids_ptr, global_ids->shape[0], min_vids_ptr, rank);
+  CUDACHECK(cudaGetLastError());
 }
 
 __global__
@@ -381,6 +382,7 @@ void LoadFeature(IdArray frontier, IdArray features, IdArray *features_to_send) 
     _CSRRowWiseLoadSubtensorAlignedKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
       dim, n_frontier, frontier.Ptr<IdType>(), features.Ptr<DataType>(), features_to_send->Ptr<DataType>()
     );
+    CUDACHECK(cudaGetLastError());
   }
 }
 

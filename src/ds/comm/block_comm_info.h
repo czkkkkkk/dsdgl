@@ -18,8 +18,8 @@ namespace ds {
 // NOTE: RECV_BUFFER_SIZE * N_BLOCKs must greater than the communication size of 
 // a connection. We may need to reduce the recv buffer size by partition the communication
 // into stages
-// 4MB
-static const size_t RECV_BUFFER_SIZE = 10 * 1024 * 1024;
+// 10MB
+static const size_t RECV_BUFFER_SIZE = 50 * 1024 * 1024;
 
 
 struct SendDevMem {

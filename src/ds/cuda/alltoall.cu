@@ -98,6 +98,7 @@ void _Copy(CopyArgs args) {
     tid += args.n_threads;
     buff_ptr += args.group_size;
   }
+  __threadfence_system();
   __syncthreads();
   if (args.tid % args.group_size == 0) {
     args.done.post(1);
@@ -175,14 +176,20 @@ void _AlltoallKernel(AlltoallArgs args) {
 
   _CopySendSize(send_sizes, recv_sizes, peer_id, local_tid, args.n_threads_per_conn, conn_info);
   if(tid == 0) {
-    ((int64_t*)args.recv_offset)[0] = recv_offset[0] = 0;
+    recv_offset[0] = 0;
+    if(bid == gridDim.x - 1) {
+      ((int64_t*)args.recv_offset)[0] = 0;
+    }
     for(int i = 0; i < world_size; ++i) {
-      ((int64_t*)args.recv_offset)[i+1] = recv_offset[i+1] = recv_offset[i] + recv_sizes[i];
+      recv_offset[i+1] = recv_offset[i] + recv_sizes[i];
+      if(bid == gridDim.x - 1) {
+        ((int64_t*)args.recv_offset)[i+1] = recv_offset[i+1];
+      }
     }
   }
   __syncthreads();
-  void* sendbuff = args.sendbuff + send_offset[peer_id] * args.n_bytes;
-  void* recvbuff = args.recvbuff + recv_offset[peer_id] * args.n_bytes;
+  void* sendbuff = (T*)args.sendbuff + send_offset[peer_id] * args.n_bytes / sizeof(T);
+  void* recvbuff = (T*)args.recvbuff + recv_offset[peer_id] * args.n_bytes / sizeof(T);
   int64_t send_size = (send_offset[peer_id+1] - send_offset[peer_id]) * args.n_bytes;
   int64_t recv_size = (recv_offset[peer_id+1] - recv_offset[peer_id]) * args.n_bytes;
   int global_tid = bid * args.n_threads_per_conn + local_tid;

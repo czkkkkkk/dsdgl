@@ -13,6 +13,7 @@
 
 using namespace dgl::ds;
 using namespace dgl;
+using namespace dgl::aten;
 using namespace dgl::runtime;
 
 template<typename T>
@@ -25,7 +26,7 @@ template<typename T>
 std::vector<T> RandVec(int size) {
   std::vector<T> ret(size);
   for(int i = 0; i < size; ++i) {
-    ret[i] = rand() % 100;
+    ret[i] = rand() % 100 + 1;
   }
   return ret;
 }
@@ -94,7 +95,7 @@ void _TestAlltoall(int rank, int world_size, const Vec3d<T>& input_all, int expa
   CheckVectorEq(recvbuff.ToVector<T>(), exp_recvbuff);
 }
 
-TEST(DSSampling, Alltoall) {
+TEST(DSSampling, Alltoall64bits) {
   using IdType = int64_t;
   int rank, world_size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -103,20 +104,22 @@ TEST(DSSampling, Alltoall) {
   SetEnvParam("USE_NCCL", 0);
   if(world_size == 2) {
     Vec3d<IdType> input_all = {{{1, 3}, {3, 5}}, {{1}, {100}}};
-    _TestAlltoall(rank, world_size, input_all);
-    input_all.resize(world_size, Vec2d<IdType>(world_size));
-    for(int i = 0; i < world_size; ++i) {
-      for(int j = 0; j < world_size; ++j) {
-        int size = rand() % 10000;
-        input_all[i][j] = RandVec<IdType>(size);
-      }
-    }
-    _TestAlltoall(rank, world_size, input_all);
+    // _TestAlltoall(rank, world_size, input_all);
   }
   if(world_size == 3) {
     Vec3d<IdType> input_all = {{{1, 3}, {3, 5}, {3, 8}}, {{1}, {100}, {100}}, {{1}, {100}, {100}}};
     _TestAlltoall(rank, world_size, input_all);
   }
+  Vec3d<IdType> input_all;
+  input_all.resize(world_size, Vec2d<IdType>(world_size));
+  for(int i = 0; i < world_size; ++i) {
+    for(int j = 0; j < world_size; ++j) {
+      int size = GetEnvParam("ALLTOALL_BENCHMARK_SIZE", 512);
+      input_all[i][j] = RandVec<IdType>(size);
+    }
+  }
+  _TestAlltoall(rank, world_size, input_all);
+  _TestAlltoall(rank, world_size, input_all, 602);
 }
 
 TEST(DSSampling, AlltoallNCCL) {
@@ -160,11 +163,11 @@ TEST(DSSampling, Alltoall32bits) {
     Vec3d<IdType> input_all = {{{1, 3}, {3, 5}, {3, 8}}, {{1}, {100}, {100}}, {{1}, {100}, {100}}};
     _TestAlltoall(rank, world_size, input_all);
   }
-    Vec3d<IdType> input_all;
+  Vec3d<IdType> input_all;
   input_all.resize(world_size, Vec2d<IdType>(world_size));
   for(int i = 0; i < world_size; ++i) {
     for(int j = 0; j < world_size; ++j) {
-      int size = rand() % 10000;
+      int size = rand() % 100000;
       input_all[i][j] = RandVec<IdType>(size);
     }
   }
@@ -173,26 +176,26 @@ TEST(DSSampling, Alltoall32bits) {
 }
 
 template<typename T>
-void _AlltoallBenchmark(int rank, int world_size, int size) {
+void _AlltoallBenchmark(int rank, int world_size, int size, int expand_size=1) {
   auto stream = CUDAThreadEntry::ThreadLocal()->stream;
-  std::vector<T> sendbuff(world_size * size, rank);
   std::vector<int64_t> send_offset(world_size + 1, 0);
   for(int i = 1; i <= world_size; ++i) {
     send_offset[i] = i * size;
   }
+  std::vector<T> sendbuff(send_offset[world_size] * expand_size, rank);
   auto context = DLContext({kDLGPU, rank});
   auto dgl_sendbuff = IdArray::FromVector<T>(sendbuff).CopyTo(context, stream);
   auto dgl_send_offset = IdArray::FromVector<int64_t>(send_offset).CopyTo(context, stream);
   IdArray recvbuff, recv_offset;
   // warmup
   for(int i = 0; i < 5; ++i) {
-    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, 1, rank, world_size);
+    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, expand_size, rank, world_size);
   }
   CUDACHECK(cudaDeviceSynchronize());
   int num_iters = 20;
   auto start_ts = std::chrono::high_resolution_clock::now();
   for(int i = 0; i < num_iters; ++i) {
-    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, 1, rank, world_size);
+    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, expand_size, rank, world_size);
   }
   CUDACHECK(cudaDeviceSynchronize());
   auto end_ts = std::chrono::high_resolution_clock::now();
