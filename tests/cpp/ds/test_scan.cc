@@ -35,7 +35,7 @@ _Scan(const std::vector<IdType>& seeds, const std::vector<IdType>& part_offset, 
 std::pair<std::vector<IdType>, std::vector<IdType>>
 _NaiveScan(const std::vector<IdType>& seeds, const std::vector<IdType>& part_offset, const std::vector<IdType>& part_ids, int world_size) {
   std::vector<IdType> sorted(seeds.size()), index(seeds.size()), count(world_size, 0);
-  for(int i = 0; i < seeds.size(); ++i) {
+  for(size_t i = 0; i < seeds.size(); ++i) {
     int r = part_ids[i];
     int c = count[r]++;
     int p = c + part_offset[r];

@@ -60,6 +60,7 @@ void ConvertGidToLid(IdArray global_ids, IdArray min_vids, int rank) {
   auto* min_vids_ptr = min_vids.Ptr<IdType>();
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   _GidToLidKernel<<<BLOCK_NUM, BLOCK_SIZE, 0, thr_entry->stream>>>(global_ids_ptr, global_ids->shape[0], min_vids_ptr, rank);
+  CUDACHECK(cudaGetLastError());
 }
 
 __global__
@@ -166,82 +167,6 @@ void Cluster(int rank, IdArray seeds, IdArray min_vids, int world_size, IdArray*
   *send_offset = CumSum(*send_sizes, true);
 }
 
-template <typename T, ncclDataType_t NCCL_DATA_TYPE>
-void _AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm, bool is_sample) {
-  T* send_buffer_ptr = send_buffer.Ptr<T>();
-  T* recv_buffer_ptr = recv_buffer.Ptr<T>();
-  int type_bytes = sizeof(T);
-  IdType* send_offset_ptr = send_offset.Ptr<IdType>();
-  IdType* recv_offset_ptr = recv_offset.Ptr<IdType>();
-  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
-  CUDACHECK(cudaMemcpyAsync(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
-                            send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
-                            (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice, thr_entry->stream));
-  ncclGroupStart();
-  for(int r = 0; r < world_size; ++r) {
-    if (r != rank) {
-      IdType send_size = (send_offset_ptr[r+1] - send_offset_ptr[r]) * expand_size;
-      IdType send_ptr = send_offset_ptr[r] * expand_size;
-      IdType recv_size = (recv_offset_ptr[r+1] - recv_offset_ptr[r]) * expand_size;
-      IdType recv_ptr = recv_offset_ptr[r] * expand_size;
-      ncclSend(send_buffer_ptr + send_ptr, send_size, NCCL_DATA_TYPE, r, nccl_comm, thr_entry->stream);
-      ncclRecv(recv_buffer_ptr + recv_ptr, recv_size, NCCL_DATA_TYPE, r, nccl_comm, thr_entry->stream);
-    }
-  }
-  ncclGroupEnd();
-  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
-}
-
-void AllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm, bool is_sample) {
-  if (send_buffer->dtype.bits == 64) {
-    _AllToAll<IdType, ncclInt64>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm, is_sample);
-  } else {
-    _AllToAll<DataType, ncclInt32>(send_buffer, send_offset, recv_buffer, recv_offset, expand_size, rank, world_size, nccl_comm, is_sample);
-  }
-}
-
-void AllToAllV2(IdArray send_buffer, IdArray send_offset, IdArray* recv_buffer, IdArray* host_recv_offset, int rank, int world_size) {
-  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
-  auto* ds_context = DSContext::Global();
-  auto dgl_context = send_buffer->ctx;
-  IdType* host_recv_offset_ptr = host_recv_offset->Ptr<IdType>();
-  IdType recv_buffer_size = host_recv_offset_ptr[world_size];
-  *recv_buffer = IdArray::Empty({recv_buffer_size}, send_buffer->dtype, dgl_context);
-  IdArray recv_offset = IdArray::Empty({world_size + 1}, send_buffer->dtype, dgl_context);
-  Alltoall(send_buffer.Ptr<IdType>(), send_offset.Ptr<IdType>(), recv_buffer->Ptr<IdType>(), recv_offset.Ptr<IdType>(), 
-           &ds_context->comm_info, rank, world_size, send_buffer->dtype.bits);
-}
-
-void Shuffle(IdArray seeds, IdArray host_send_offset, IdArray send_sizes, int rank, int world_size, ncclComm_t nccl_comm, IdArray* frontier, IdArray* host_recv_offset, bool is_sample) {
-  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
-  auto dgl_context = seeds->ctx;
-  auto host_dgl_context = DLContext{kDLCPU, 0};
-  IdArray recv_sizes = IdArray::Empty({world_size}, seeds->dtype, dgl_context);
-  IdArray range_seq = Range(0, world_size + 1, 64, host_dgl_context);
-  AllToAll(send_sizes, range_seq, recv_sizes, range_seq, 1, rank, world_size, nccl_comm, is_sample);
-
-  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
-  IdArray host_recv_sizes = recv_sizes.CopyTo(host_dgl_context, thr_entry->stream);
-  CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
-  *host_recv_offset = Full<int64_t>(0, world_size + 1, host_dgl_context);
-  // *host_recv_offset = MemoryManager::Global()->Full<int64_t>("HOST_RECV_OFFSET", 0, world_size + 1, host_dgl_context);
-  auto* host_recv_offset_ptr = host_recv_offset->Ptr<IdType>();
-  auto* host_recv_sizes_ptr = host_recv_sizes.Ptr<IdType>();
-  host_recv_offset_ptr[0] = 0;
-  for(int i = 1; i <= world_size; ++i) {
-    host_recv_offset_ptr[i] = host_recv_offset_ptr[i-1] + host_recv_sizes_ptr[i-1];
-  }
-  int n_frontier = host_recv_offset_ptr[world_size];
-  *frontier = IdArray::Empty({n_frontier}, seeds->dtype, dgl_context);
-  // *frontier = MemoryManager::Global()->Empty("FRONTIER", {n_frontier}, seeds->dtype, dgl_context);
-  AllToAll(seeds, host_send_offset, *frontier, *host_recv_offset, 1, rank, world_size, nccl_comm, is_sample);
-}
-
-void ShuffleV2(IdArray seeds, IdArray send_offset, int rank, int world_size, IdArray* frontier, IdArray* host_recv_offset) {
-  AllToAllV2(seeds, send_offset, frontier, host_recv_offset, rank, world_size);
-}
-
-
 template <int BLOCK_ROWS>
 __global__ void _CSRRowWiseSampleReplaceKernel(
     int fanout, 
@@ -320,24 +245,6 @@ void SampleNeighborsV2(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray*
     auto coo = CSRRowWiseSampling(csr_mat, frontier, fanout, NullArray(frontier->dtype, frontier->ctx));
     *neighbors = coo.col;
   }
-}
-
-void Reshuffle(IdArray neighbors, int fanout, int n_seeds, IdArray host_shuffle_send_offset, IdArray host_shuffle_recv_offset, int rank, int world_size, ncclComm_t nccl_comm, IdArray* reshuffled_neighbors, bool is_sample) {
-  int shuffle_send_size = host_shuffle_send_offset.Ptr<IdType>()[world_size];
-  *reshuffled_neighbors = IdArray::Empty({shuffle_send_size * fanout}, neighbors->dtype, neighbors->ctx);
-  AllToAll(neighbors, host_shuffle_recv_offset, *reshuffled_neighbors, host_shuffle_send_offset, fanout, rank, world_size, nccl_comm, is_sample);
-}
-
-void ReshuffleV2(IdArray neighbors, int fanout, IdArray host_shuffle_recv_offset, int rank, int world_size, IdArray* reshuffled_neighbors) {
-  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
-  auto dgl_context = neighbors->ctx;
-  auto* host_shuffle_recv_offset_ptr = host_shuffle_recv_offset.Ptr<IdType>();
-  for(int i = 0; i <= world_size; ++i) {
-    host_shuffle_recv_offset_ptr[i] *= fanout;
-  }
-  auto shuffle_recv_offset = host_shuffle_recv_offset.CopyTo(dgl_context, thr_entry->stream);
-  IdArray recv_offset;
-  AllToAllV2(neighbors, shuffle_recv_offset, reshuffled_neighbors, &recv_offset, rank, world_size, "RESHUFFLEV2");
 }
 
 template <class T>
@@ -475,6 +382,7 @@ void LoadFeature(IdArray frontier, IdArray features, IdArray *features_to_send) 
     _CSRRowWiseLoadSubtensorAlignedKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
       dim, n_frontier, frontier.Ptr<IdType>(), features.Ptr<DataType>(), features_to_send->Ptr<DataType>()
     );
+    CUDACHECK(cudaGetLastError());
   }
 }
 

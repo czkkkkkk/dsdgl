@@ -15,8 +15,11 @@ namespace ds {
 #define CACHE_LINE_SIZE 128
 #define MEM_ALIGN 4096
 
-// 4MB
-static const size_t RECV_BUFFER_SIZE = 1024 * 1024 * 4;
+// NOTE: RECV_BUFFER_SIZE * N_BLOCKs must greater than the communication size of 
+// a connection. We may need to reduce the recv buffer size by partition the communication
+// into stages
+// 10MB
+static const size_t RECV_BUFFER_SIZE = 50 * 1024 * 1024;
 
 
 struct SendDevMem {

@@ -160,6 +160,8 @@ class CUDAThreadEntry {
  public:
   /*! \brief The cuda stream */
   cudaStream_t stream{nullptr};
+  /*! \brief Data copy stream for DS */
+  cudaStream_t data_copy_stream{nullptr};
   /*! \brief The cusparse handler */
   cusparseHandle_t cusparse_handle{nullptr};
   /*! \brief The cublas handler */
