@@ -6,11 +6,13 @@
 #include <dgl/runtime/ndarray.h>
 #include "dmlc/logging.h"
 #include <cuda_runtime.h>
+#include <thread>
 
 #include "context.h"
 #include "./conn/nvmlwrap.h"
 #include "./utils.h"
 #include "../runtime/cuda/cuda_common.h"
+#include "schedule.h"
 
 using namespace dgl::runtime;
 
@@ -53,6 +55,7 @@ void Initialize(int rank, int world_size) {
   ds_context->rank = rank;
   ds_context->world_size = world_size;
   ds_context->coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size));
+  ds_context->comm_coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size, 12307));
   cudaSetDevice(rank);
 
   int use_nccl = GetEnvParam("USE_NCCL", 0);
@@ -77,6 +80,13 @@ void Initialize(int rank, int world_size) {
     ncclCommInitRank(&ds_context->nccl_comm, world_size, nccl_id, rank);
     ncclCommInitRank(&ds_context->nccl_comm_load, world_size, nccl_id_load, rank);
   }
+
+  //init scheduler
+  std::thread scheduler(&Scheduler::Schedule, Scheduler::Global());
+  std::thread coordinator(&Scheduler::Coordinate, Scheduler::Global());
+  scheduler.detach();
+  coordinator.detach();
+
   LOG(INFO) << "Rank " + std::to_string(rank) + " successfully builds nccl communicator";
 }
 

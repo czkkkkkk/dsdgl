@@ -15,6 +15,7 @@
 #include "cuda/cuda_utils.h"
 #include <chrono>
 #include <thread>
+#include "schedule.h"
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
@@ -39,6 +40,7 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   IdArray min_vids = args[2];
 
   auto* context = DSContext::Global();
+  auto* scheduler = Scheduler::Global();
   int n_input_nodes = input_nodes->shape[0];
   int rank = context->rank;
   int world_size = context->world_size;
@@ -50,15 +52,19 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   Cluster(rank, input_nodes, min_vids, world_size, &send_sizes, &send_offset);
 
   IdArray frontier, recv_offset;
+  scheduler->TryComm(COMM_LOAD);
   std::tie(frontier, recv_offset) = Alltoall(input_nodes, send_offset, 1, rank, world_size, context->nccl_comm_load, false);
+  scheduler->FinishComm();
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray features_to_send;
   LoadFeature(frontier, features, &features_to_send);
 
   IdArray features_recv, feature_recv_offset;
+  scheduler->TryComm(COMM_LOAD);
   std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, features->shape[1], rank, world_size, context->nccl_comm_load, false);
-  
+  scheduler->FinishComm();
+
   *rv = features_recv;
 });
 
