@@ -39,6 +39,11 @@ void SetupGpuCommunicationEnv() {
     conns.push_back(Connection::GetConnection(coor->GetPeerInfos()[rank], coor->GetPeerInfos()[r]));
   }
   BuildCommInfo(n_block, conns, coor, &ds_context->comm_info);
+  std::vector<std::shared_ptr<Connection>> conns_load;
+  for(int r = 0; r < world_size; ++r) {
+    conns_load.push_back(Connection::GetConnection(coor->GetPeerInfos()[rank], coor->GetPeerInfos()[r]));
+  }
+  BuildCommInfo(n_block, conns_load, coor, &ds_context->comm_info_load);
 }
 
 void Initialize(int rank, int world_size) {

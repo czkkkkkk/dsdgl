@@ -22,6 +22,8 @@ struct DSContext {
   ncclComm_t nccl_comm_load;
   std::unique_ptr<Coordinator> coordinator;
   CommInfo comm_info;
+  std::unique_ptr<Coordinator> coordinator_load;
+  CommInfo comm_info_load;
 
   static DSContext* Global() {
     static DSContext instance;

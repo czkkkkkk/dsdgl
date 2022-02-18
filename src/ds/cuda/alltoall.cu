@@ -156,6 +156,13 @@ void _CopyData(void* input, int64_t send_size, void* output, int64_t recv_size, 
   _Copy<T>(copy_args);
 }
 
+__device__ 
+uint get_smid() {
+  uint ret;
+  asm("mov.u32 %0, %smid;" : "=r"(ret) );
+  return ret;
+}
+
 template<typename T, bool exclusive>
 __global__
 void _AlltoallKernel(AlltoallArgs args) {
@@ -207,7 +214,7 @@ void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_
   AlltoallArgs args;
   args.rank = rank;
   args.world_size = world_size;
-  static constexpr int MAX_THREADS = 1024;
+  static constexpr int MAX_THREADS = 512;
   CHECK(MAX_THREADS % world_size == 0);
   args.n_threads_per_conn = MAX_THREADS / world_size;
   int n_threads = args.n_threads_per_conn * (world_size - 1);
@@ -286,7 +293,7 @@ void NCCLAllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer,
   ncclGroupEnd();
 }
 
-std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
+std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm, bool is_sample) {
   if(!GetEnvParam("USE_NCCL", 1)) {
     auto stream = CUDAThreadEntry::ThreadLocal()->stream;
     auto data_copy_stream = CUDAThreadEntry::ThreadLocal()->data_copy_stream;
@@ -299,14 +306,20 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     CUDACHECK(cudaStreamSynchronize(stream));
     auto host_send_offset = send_offset.CopyTo({kDLCPU, 0}, data_copy_stream);
 
-    auto recv_offset = ExchangeSendSizes(send_offset, &ds_context->comm_info, rank, world_size);
+    CommInfo *comm_info;
+    if (is_sample) {
+      comm_info = &ds_context->comm_info;
+    } else {
+      comm_info = &ds_context->comm_info_load;
+    }
+
+    auto recv_offset = ExchangeSendSizes(send_offset, comm_info, rank, world_size);
 
     CUDACHECK(cudaStreamSynchronize(stream));
 
-
     // Exclusive all to all
     if(world_size > 1) {
-      CustomAlltoall(input.Ptr<void>(), send_offset.Ptr<IdType>(), recvbuff.Ptr<void>(), recv_offset.Ptr<IdType>(), type_bytes * expand_size, input->dtype.bits / 8, &ds_context->comm_info, rank, world_size);
+      CustomAlltoall(input.Ptr<void>(), send_offset.Ptr<IdType>(), recvbuff.Ptr<void>(), recv_offset.Ptr<IdType>(), type_bytes * expand_size, input->dtype.bits / 8, comm_info, rank, world_size);
     }
 
     // send data to myself in parallel
