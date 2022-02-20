@@ -1,13 +1,10 @@
 #ifndef DGL_DS_SCHEDULE_H
 #define DGL_DS_SCHEDULE_H
 
-#include <dgl/runtime/container.h>
-#include <dgl/packed_func_ext.h>
 #include <stdio.h>
 #include <unistd.h>
-
 #include "context.h"
-#include "utils.h"
+#include "buffer.h"
 
 namespace dgl {
 

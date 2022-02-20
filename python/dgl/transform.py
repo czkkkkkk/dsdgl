@@ -18,6 +18,7 @@ from .partition import metis_partition_assignment
 from .partition import partition_graph_with_halo
 from .partition import metis_partition
 from . import subgraph
+import torch
 
 # TO BE DEPRECATED
 from ._deprecate.graph import DGLGraph as DGLGraphStale
@@ -2215,7 +2216,10 @@ def to_block(g, dst_nodes=None, include_dst_in_src=True, min_vids=None):
         if g._graph.ctx != d.ctx:
             raise ValueError('g and dst_nodes need to have the same context.')
 
+    if min_vids is None:
+        min_vids = torch.tensor([]).to(0)
     min_vids = F.to_dgl_nd(min_vids)
+
     new_graph_index, src_nodes_nd, induced_edges_nd = _CAPI_DGLToBlock(
         g._graph, dst_node_ids_nd, include_dst_in_src, min_vids)
 

@@ -158,12 +158,21 @@ DGL_REGISTER_GLOBAL("transform._CAPI_DGLToBlock")
     std::vector<IdArray> lhs_nodes;
     std::vector<IdArray> induced_edges;
 
-    ATEN_XPU_SWITCH_CUDA(graph_ref->Context().device_type, XPU, "ToBlock", {
-      ATEN_ID_TYPE_SWITCH(graph_ref->DataType(), IdType, {
-      std::tie(new_graph, lhs_nodes, induced_edges) = ToBlock<XPU, IdType>(
-        graph_ref.sptr(), rhs_nodes, include_rhs_in_lhs, min_vids);
+    if (min_vids->shape[0] > 0) {
+      ATEN_XPU_SWITCH_CUDA(graph_ref->Context().device_type, XPU, "ToBlock", {
+        ATEN_ID_TYPE_SWITCH(graph_ref->DataType(), IdType, {
+        std::tie(new_graph, lhs_nodes, induced_edges) = ToBlock<XPU, IdType>(
+          graph_ref.sptr(), rhs_nodes, include_rhs_in_lhs, min_vids);
+        });
       });
-    });
+    } else {
+      ATEN_XPU_SWITCH_CUDA(graph_ref->Context().device_type, XPU, "ToBlock", {
+        ATEN_ID_TYPE_SWITCH(graph_ref->DataType(), IdType, {
+        std::tie(new_graph, lhs_nodes, induced_edges) = ToBlock<XPU, IdType>(
+          graph_ref.sptr(), rhs_nodes, include_rhs_in_lhs);
+        });
+      });
+    }
 
     List<Value> lhs_nodes_ref;
     for (IdArray &array : lhs_nodes)

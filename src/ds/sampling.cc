@@ -14,7 +14,6 @@
 #include "cuda/cuda_utils.h"
 #include "./memory_manager.h"
 #include "./cuda/alltoall.h"
-#include "schedule.h"
 
 #define CUDACHECK(cmd) do {                         \
   cudaError_t e = cmd;                              \
@@ -81,7 +80,6 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   IdArray global_nid_map = args[9];
   const bool is_local = args[10];
   auto* context = DSContext::Global();
-  auto* scheduler = Scheduler::Global();
 
   int n_seeds = seeds->shape[0];
   int rank = context->rank;
@@ -105,19 +103,14 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   Cluster(rank, seeds, min_vids, world_size, &send_sizes, &send_offset);
 
   IdArray frontier, recv_offset;
-  scheduler->TryComm(COMM_SAMPLE);
   std::tie(frontier, recv_offset) = Alltoall(seeds, send_offset, 1, rank, world_size, context->nccl_comm, true);
-  scheduler->FinishComm();
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray neighbors, edges;
   Sample(frontier, hg.sptr(), fanout, replace, &neighbors, &edges);
   
   IdArray reshuffled_neighbors, reshuffle_recv_offset;
-
-  scheduler->TryComm(COMM_SAMPLE);
   std::tie(reshuffled_neighbors, reshuffle_recv_offset) = Alltoall(neighbors, recv_offset, fanout, rank, world_size, context->nccl_comm, true);
-  scheduler->FinishComm();
 
   HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, reshuffled_neighbors);
   
@@ -227,10 +220,12 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighborsUVA")
   int fanout = args[3];
   bool replace = args[4];
   IdArray neighbors, edges;
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  cudaStream_t s = thr_entry->stream;
   SampleUVA(seeds, row_idx, hg.sptr(), fanout, replace, &neighbors, &edges);
+  CUDACHECK(cudaStreamSynchronize(s));
   IdType num_vertices = row_idx->shape[0];
   HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, neighbors);
-  MemoryManager::Global()->ClearUseCount();
   *rv = HeteroGraphRef(subg);
 });
 

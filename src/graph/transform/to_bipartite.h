@@ -24,7 +24,7 @@ ToBlock(HeteroGraphPtr graph, const std::vector<IdArray> &rhs_nodes,
 template<DLDeviceType XPU, typename IdType>
 std::tuple<HeteroGraphPtr, std::vector<IdArray>, std::vector<IdArray>>
 ToBlock(HeteroGraphPtr graph, const std::vector<IdArray> &rhs_nodes,
-        bool include_rhs_in_lhs, IdArray min_vids = nullptr);
+        bool include_rhs_in_lhs, IdArray min_vids);
 
 }  // namespace transform
 }  // namespace dgl

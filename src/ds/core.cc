@@ -59,10 +59,12 @@ void Initialize(int rank, int world_size) {
   cudaSetDevice(rank);
 
   int use_nccl = GetEnvParam("USE_NCCL", 0);
-  wrapNvmlInit();
+  if (use_nccl == 0) {
+    wrapNvmlInit();
+    // Build our communication environment
+    SetupGpuCommunicationEnv();
+  }
 
-  // Build our communication environment
-  SetupGpuCommunicationEnv();
   // Build NCCL environment
   ncclUniqueId nccl_id, nccl_id_load;
   if (rank == 0) {
