@@ -35,7 +35,7 @@ CudaToBlock(
     HeteroGraphPtr graph,
     const std::vector<IdArray>& rhs_nodes,
     const bool include_rhs_in_lhs,
-    IdArray min_vids = nullptr);
+    IdArray min_vids);
 
 }  // namespace cuda
 }  // namespace transform

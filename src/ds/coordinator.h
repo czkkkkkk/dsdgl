@@ -35,7 +35,7 @@ struct ProcInfo {
 
 class Coordinator {
  public:
-  Coordinator(int rank, int workd_size);
+  Coordinator(int rank, int workd_size, int port=12306);
 
   int GetWorldSize() const { return n_peers_; }
   int GetRank() const { return rank_; }
@@ -173,7 +173,7 @@ class Coordinator {
   }
 
  private:
-  void _Initialize();
+  void _Initialize(int port);
 
   bool is_root_;
   int rank_;

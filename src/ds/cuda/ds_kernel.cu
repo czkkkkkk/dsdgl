@@ -174,25 +174,16 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
     IdType *frontier,
     IdType *in_ptr, 
     IdType *in_index,
-    IdType *edge_index,
     IdType *out_ptr, 
-    IdType *out_index,
-    IdType *out_edges) {
+    IdType *out_index) {
   assert(blockDim.x == WARP_SIZE);
   constexpr int NUM_RNG = ((WARP_SIZE*BLOCK_ROWS)+255)/256;
-  // __shared__ curandState rng_array[NUM_RNG];
   __shared__ curandState rng_array[WARP_SIZE*BLOCK_ROWS];
   assert(blockDim.x >= NUM_RNG);
-  // int rand_seed = 0;
   int pos = threadIdx.x + WARP_SIZE * threadIdx.y;
   int rand_seed = pos;
-  // if (threadIdx.y == 0 && threadIdx.x < NUM_RNG) {
-  //   curand_init(rand_seed, 0, threadIdx.x, rng_array+threadIdx.x);
-  // }
-  // curand_init(rand_seed, 0, threadIdx.x, rng_array+threadIdx.x);
   curand_init(rand_seed, 0, threadIdx.x, rng_array+pos);
   __syncthreads();
-  // curandState * const rng = rng_array+((threadIdx.x+WARP_SIZE*threadIdx.y)/256);
   curandState * const rng = rng_array + pos;
 
   IdType out_row = blockIdx.x*blockDim.y+threadIdx.y;
@@ -205,7 +196,6 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
       const IdType edge = curand(rng) % deg;
       const IdType out_idx = out_row_start + idx;
       out_index[out_idx] = in_index[in_row_start + edge];
-      //out_edges[out_idx] = edge_index[in_row_start + edge];
     }
     out_row += gridDim.x * blockDim.y;
   }
@@ -231,8 +221,8 @@ void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* n
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   if(grid.x > 0) {
     _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
-      fanout, n_frontier, frontier.Ptr<IdType>(), csr_mat.indptr.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(), csr_mat.data.Ptr<IdType>(),
-      edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>(), edges->Ptr<IdType>()
+      fanout, n_frontier, frontier.Ptr<IdType>(), csr_mat.indptr.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(),
+      edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>()
     );
   }
   // CUDACHECK(cudaDeviceSynchronize());
@@ -310,20 +300,22 @@ void Replicate(IdArray src, IdArray *dst, int fanout) {
 void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges) {
   auto dgl_ctx = frontier->ctx;
   int n_frontier = frontier->shape[0];
-  IdArray edge_offset = MemoryManager::Global()->Full<int64_t>("EDGE_OFFSET", fanout, n_frontier + 1, dgl_ctx);
+  // IdArray edge_offset = IdArray::Empty({n_frontier + 1}, frontier->dtype, dgl_ctx);
+  IdArray edge_offset = Full<IdType>(fanout, n_frontier + 1, dgl_ctx);
   auto edge_offset_ptr = thrust::device_ptr<IdType>(edge_offset.Ptr<IdType>());
   thrust::exclusive_scan(edge_offset_ptr, edge_offset_ptr + n_frontier + 1, edge_offset_ptr);
-  *neighbors = MemoryManager::Global()->Empty("NEIGHBORS", {n_frontier * fanout}, frontier->dtype, dgl_ctx);
-  *edges = MemoryManager::Global()->Empty("EDGES", {n_frontier * fanout}, frontier->dtype, dgl_ctx);
+  *neighbors = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
 
-  constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
+  constexpr int BLOCK_ROWS = 512 / WARP_SIZE;
   const dim3 block(WARP_SIZE, BLOCK_ROWS);
-  const dim3 grid((n_frontier + block.y - 1) / block.y);
+  const dim3 grid((n_frontier + 512 - 1) / 512);
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
-  _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
-    fanout, n_frontier, frontier.Ptr<IdType>(), row_idx.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(), csr_mat.data.Ptr<IdType>(),
-    edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>(), edges->Ptr<IdType>()
-  );
+  if(grid.x > 0) {
+    _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
+      fanout, n_frontier, frontier.Ptr<IdType>(), row_idx.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(),
+      edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>()
+    );
+  }
 }
 
 template <int BLOCK_ROWS>

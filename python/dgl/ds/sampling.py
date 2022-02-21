@@ -59,14 +59,6 @@ def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, f
 
     src, dst, eid = subgidx.edges(0)
     ret = graph((dst, src), num_nodes = num_vertices)
-    # print("finish convert graph")
-    # todo zqh handle features
-    # if copy_ndata:
-    #     node_frames = utils.extract_node_subframes(g, None)
-    #     utils.set_new_frames(ret, node_frames=node_frames)
-    # if copy_edata:
-    #     edge_frames = utils.extract_edge_subframes(g, induced_edges)
-    #     utils.set_new_frames(ret, edge_frames=edge_frames)
     return ret
 
 def rebalance_train_nids(train_nids, batch_size, global_nid_map):

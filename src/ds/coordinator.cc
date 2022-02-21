@@ -12,15 +12,15 @@ namespace dgl {
 namespace ds {
 
 
-Coordinator::Coordinator(int rank, int world_size) {
+Coordinator::Coordinator(int rank, int world_size, int port) {
   rank_ = rank;
   n_peers_ = world_size;
   is_root_ = rank == 0? true: false;
   zmq_ctx_ = std::unique_ptr<zmq::context_t>(new zmq::context_t());
-  _Initialize();
+  _Initialize(port);
 }
 
-void Coordinator::_Initialize() {
+void Coordinator::_Initialize(int mport) {
   // 1. Each rank setups the socket receving msg from the root
   int port = GetAvailablePort();
   recv_addr_ =
@@ -32,7 +32,7 @@ void Coordinator::_Initialize() {
 
   // 2. Root setup the socket receving msg from all ranks
   // NOTE: currently assume all ranks are on the same machine
-  int master_port = GetEnvParam("MASTER_PORT", 12306);
+  int master_port = GetEnvParam("MASTER_PORT", mport);
   auto root_bind_addr = std::string("tcp://*:") + std::to_string(master_port);
   auto root_conn_addr = std::string("tcp://") + GetHostName() + ":" + std::to_string(master_port);
   if (is_root_) {

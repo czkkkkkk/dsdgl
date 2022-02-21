@@ -8,6 +8,7 @@
 #include "../../runtime/cuda/cuda_common.h"
 #include "../context.h"
 #include "./ds_kernel.h"
+#include "../schedule.h"
 
 using namespace dgl::runtime;
 
@@ -156,6 +157,13 @@ void _CopyData(void* input, int64_t send_size, void* output, int64_t recv_size, 
   _Copy<T>(copy_args);
 }
 
+__device__ 
+uint get_smid() {
+  uint ret;
+  asm("mov.u32 %0, %smid;" : "=r"(ret) );
+  return ret;
+}
+
 template<typename T, bool exclusive>
 __global__
 void _AlltoallKernel(AlltoallArgs args) {
@@ -207,7 +215,7 @@ void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_
   AlltoallArgs args;
   args.rank = rank;
   args.world_size = world_size;
-  static constexpr int MAX_THREADS = 1024;
+  static constexpr int MAX_THREADS = 512;
   CHECK(MAX_THREADS % world_size == 0);
   args.n_threads_per_conn = MAX_THREADS / world_size;
   int n_threads = args.n_threads_per_conn * (world_size - 1);
@@ -286,7 +294,9 @@ void NCCLAllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer,
   ncclGroupEnd();
 }
 
-std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
+std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm, bool is_sample) {
+  CommToken comm_token = is_sample ? COMM_SAMPLE : COMM_LOAD;
+  auto* scheduler = Scheduler::Global();
   if(!GetEnvParam("USE_NCCL", 1)) {
     auto stream = CUDAThreadEntry::ThreadLocal()->stream;
     auto data_copy_stream = CUDAThreadEntry::ThreadLocal()->data_copy_stream;
@@ -299,14 +309,23 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     CUDACHECK(cudaStreamSynchronize(stream));
     auto host_send_offset = send_offset.CopyTo({kDLCPU, 0}, data_copy_stream);
 
-    auto recv_offset = ExchangeSendSizes(send_offset, &ds_context->comm_info, rank, world_size);
+    CommInfo *comm_info;
+    if (is_sample) {
+      comm_info = &ds_context->comm_info;
+    } else {
+      comm_info = &ds_context->comm_info_load;
+    }
 
+    scheduler->TryComm(comm_token);
+    auto recv_offset = ExchangeSendSizes(send_offset, comm_info, rank, world_size);
     CUDACHECK(cudaStreamSynchronize(stream));
-
+    scheduler->FinishComm();
 
     // Exclusive all to all
     if(world_size > 1) {
-      CustomAlltoall(input.Ptr<void>(), send_offset.Ptr<IdType>(), recvbuff.Ptr<void>(), recv_offset.Ptr<IdType>(), type_bytes * expand_size, input->dtype.bits / 8, &ds_context->comm_info, rank, world_size);
+      scheduler->TryComm(comm_token);
+      CustomAlltoall(input.Ptr<void>(), send_offset.Ptr<IdType>(), recvbuff.Ptr<void>(), recv_offset.Ptr<IdType>(), type_bytes * expand_size, input->dtype.bits / 8, comm_info, rank, world_size);
+      scheduler->FinishComm();
     }
 
     // send data to myself in parallel
@@ -333,20 +352,26 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     auto send_sizes = Diff(send_offset);
     IdArray recv_sizes = IdArray::Empty({world_size}, send_offset->dtype, dgl_context);
     IdArray range_seq = Range(0, world_size + 1, 64, host_dgl_context);
+    
+    scheduler->TryComm(comm_token);
     NCCLAllToAll<int64_t, ncclInt64>(send_sizes, range_seq, recv_sizes, range_seq, 1, rank, world_size, nccl_comm);
-    auto host_send_offset = send_offset.CopyTo(host_dgl_context, stream);
+    scheduler->FinishComm();
 
+    auto host_send_offset = send_offset.CopyTo(host_dgl_context, stream);
     auto recv_offset = CumSum(recv_sizes, true);
-    IdArray host_recv_offset = recv_offset.CopyTo(host_dgl_context, stream);
     CUDACHECK(cudaStreamSynchronize(stream));
+    IdArray host_recv_offset = recv_offset.CopyTo(host_dgl_context, stream);
     auto* host_recv_offset_ptr = host_recv_offset.Ptr<IdType>();
     int n_recv = host_recv_offset_ptr[world_size] * expand_size;
     auto recvbuff = IdArray::Empty({n_recv}, input->dtype, dgl_context);
+
+    scheduler->TryComm(comm_token);
     if(input->dtype.bits == 32) {
       NCCLAllToAll<int, ncclInt32>(input, host_send_offset, recvbuff, host_recv_offset, expand_size, rank, world_size, nccl_comm);
     } else {
       NCCLAllToAll<int64_t, ncclInt64>(input, host_send_offset, recvbuff, host_recv_offset, expand_size, rank, world_size, nccl_comm);
     }
+    scheduler->FinishComm();
     return {recvbuff, recv_offset};
   }
 }

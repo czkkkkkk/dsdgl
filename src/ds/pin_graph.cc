@@ -53,6 +53,7 @@ DGL_REGISTER_GLOBAL("ds.pin_graph._CAPI_DGLDSPinGraph")
   CUDACHECK(cudaMemcpy(ret.Ptr<uint64_t>(), indptr.Ptr<uint64_t>(), sizeof(uint64_t) * indptr->shape[0], cudaMemcpyHostToDevice));
   CUDACHECK(cudaDeviceSynchronize());
   IdArray indices = mat.indices;
+  printf("vertex number: %lu, edge number: %lu\n", indptr->shape[0], indices->shape[0]);
   Register(indices);
   *rv = ret;
 });

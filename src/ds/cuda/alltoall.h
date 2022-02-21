@@ -47,7 +47,7 @@ void CustomizedAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, in
  * @return Tuple of (received buff, recv_sizes, recv_offset)
  */
 // FIXME: wrap the low-level communicator
-std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm=nullptr);
+std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm=nullptr, bool is_sample=true);
 
 }
 }
