@@ -167,37 +167,39 @@ void Cluster(int rank, IdArray seeds, IdArray min_vids, int world_size, IdArray*
   *send_offset = CumSum(*send_sizes, true);
 }
 
-template <int BLOCK_ROWS>
+template <int BLOCK_WARPS, int TILE_SIZE>
 __global__ void _CSRRowWiseSampleReplaceKernel(
-    int fanout, 
-    IdType num_frontier, 
-    IdType *frontier,
+    const uint64_t rand_seed,
+    int num_picks, 
+    IdType num_rows, 
+    IdType *in_rows,
     IdType *in_ptr, 
     IdType *in_index,
     IdType *out_ptr, 
     IdType *out_index) {
   assert(blockDim.x == WARP_SIZE);
-  constexpr int NUM_RNG = ((WARP_SIZE*BLOCK_ROWS)+255)/256;
-  __shared__ curandState rng_array[WARP_SIZE*BLOCK_ROWS];
-  assert(blockDim.x >= NUM_RNG);
-  int pos = threadIdx.x + WARP_SIZE * threadIdx.y;
-  int rand_seed = pos;
-  curand_init(rand_seed, 0, threadIdx.x, rng_array+pos);
-  __syncthreads();
-  curandState * const rng = rng_array + pos;
 
-  IdType out_row = blockIdx.x*blockDim.y+threadIdx.y;
-  while (out_row < num_frontier) {
-    const IdType row = frontier[out_row];
-    const IdType in_row_start = in_ptr[row];
-    const IdType out_row_start = out_ptr[out_row];
-    const IdType deg = in_ptr[row + 1] - in_row_start;
-    for (int idx = threadIdx.x; idx < fanout; idx += blockDim.x) {
-      const IdType edge = curand(rng) % deg;
-      const IdType out_idx = out_row_start + idx;
-      out_index[out_idx] = in_index[in_row_start + edge];
+  int64_t out_row = blockIdx.x*TILE_SIZE+threadIdx.y;
+  const int64_t last_row = min(static_cast<int64_t>(blockIdx.x+1)*TILE_SIZE, num_rows);
+
+  curandState rng;
+  curand_init(rand_seed*gridDim.x+blockIdx.x, threadIdx.y*WARP_SIZE+threadIdx.x, 0, &rng);
+
+  while (out_row < last_row) {
+    const int64_t row = in_rows[out_row];
+    const int64_t in_row_start = in_ptr[row];
+    const int64_t out_row_start = out_ptr[out_row];
+    const int64_t deg = in_ptr[row + 1] - in_row_start;
+
+    if (deg > 0) {
+      // each thread then blindly copies in rows only if deg > 0.
+      for (int idx = threadIdx.x; idx < num_picks; idx += blockDim.x) {
+        const int64_t edge = curand(&rng) % deg;
+        const int64_t out_idx = out_row_start+idx;
+        out_index[out_idx] = in_index[in_row_start+edge];
+      }
     }
-    out_row += gridDim.x * blockDim.y;
+    out_row += BLOCK_WARPS;
   }
 }
 
@@ -205,23 +207,21 @@ void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* n
   auto dgl_ctx = frontier->ctx;
   int n_frontier = frontier->shape[0];
   IdArray edge_offset = Full<int64_t>(fanout, n_frontier, dgl_ctx);
-  // IdArray edge_offset = MemoryManager::Global()->Full<int64_t>("EDGE_OFFSET", fanout, n_frontier + 1, dgl_ctx);
   edge_offset = CumSum(edge_offset, true);
-  // auto edge_offset_ptr = thrust::device_ptr<IdType>(edge_offset.Ptr<IdType>());
-  // thrust::exclusive_scan(edge_offset_ptr, edge_offset_ptr + n_frontier + 1, edge_offset_ptr);
-  // CUDACHECK(cudaDeviceSynchronize());
   *neighbors = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
-  *edges = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
+  // *edges = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
   // *neighbors = MemoryManager::Global()->Empty("NEIGHBORS", {n_frontier * fanout}, frontier->dtype, dgl_ctx);
   // *edges = MemoryManager::Global()->Empty("EDGES", {n_frontier * fanout}, frontier->dtype, dgl_ctx);
 
-  constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
-  const dim3 block(WARP_SIZE, BLOCK_ROWS);
-  const dim3 grid((n_frontier + block.y - 1) / block.y);
+  constexpr int BLOCK_WARPS = 128/WARP_SIZE;
+  constexpr int TILE_SIZE = BLOCK_WARPS*16;
+  const dim3 block(WARP_SIZE, BLOCK_WARPS);
+  const dim3 grid((n_frontier + TILE_SIZE - 1) / TILE_SIZE);
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  const uint64_t random_seed = 7777777;
   if(grid.x > 0) {
-    _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
-      fanout, n_frontier, frontier.Ptr<IdType>(), csr_mat.indptr.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(),
+    _CSRRowWiseSampleReplaceKernel<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
+      random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), csr_mat.indptr.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(),
       edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>()
     );
   }
@@ -302,17 +302,19 @@ void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, in
   int n_frontier = frontier->shape[0];
   // IdArray edge_offset = IdArray::Empty({n_frontier + 1}, frontier->dtype, dgl_ctx);
   IdArray edge_offset = Full<IdType>(fanout, n_frontier + 1, dgl_ctx);
-  auto edge_offset_ptr = thrust::device_ptr<IdType>(edge_offset.Ptr<IdType>());
-  thrust::exclusive_scan(edge_offset_ptr, edge_offset_ptr + n_frontier + 1, edge_offset_ptr);
+  edge_offset = CumSum(edge_offset, true);
   *neighbors = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
 
-  constexpr int BLOCK_ROWS = 512 / WARP_SIZE;
-  const dim3 block(WARP_SIZE, BLOCK_ROWS);
-  const dim3 grid((n_frontier + 512 - 1) / 512);
+  constexpr int BLOCK_WARPS = 128/WARP_SIZE;
+  constexpr int TILE_SIZE = BLOCK_WARPS*16;
+  const dim3 block(WARP_SIZE, BLOCK_WARPS);
+  const dim3 grid((n_frontier + TILE_SIZE - 1) / TILE_SIZE);
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  const uint64_t random_seed = 7777777;
+
   if(grid.x > 0) {
-    _CSRRowWiseSampleReplaceKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
-      fanout, n_frontier, frontier.Ptr<IdType>(), row_idx.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(),
+    _CSRRowWiseSampleReplaceKernel<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
+      random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), row_idx.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(),
       edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>()
     );
   }
@@ -364,8 +366,8 @@ void LoadFeature(IdArray frontier, IdArray features, IdArray *features_to_send) 
   auto dgl_ctx = features->ctx;
   int n_frontier = frontier->shape[0], dim = features->shape[1];
   *features_to_send = IdArray::Empty({n_frontier * dim}, features->dtype, dgl_ctx);
-  constexpr int BLOCK_X = 64;
-  constexpr int BLOCK_ROWS = 16;
+  constexpr int BLOCK_X = 128;
+  constexpr int BLOCK_ROWS = 4;
   const dim3 block(BLOCK_X, BLOCK_ROWS);
   int BLOCK_NUM = n_frontier / BLOCK_ROWS;
   const dim3 grid(BLOCK_NUM);
