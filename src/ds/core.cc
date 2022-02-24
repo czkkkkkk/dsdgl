@@ -48,7 +48,18 @@ void SetupGpuCommunicationEnv() {
   BuildCommInfo(n_block, conns_load, coor, &ds_context->comm_info_load);
 }
 
-void Initialize(int rank, int world_size) {
+void InitNcclComm(ncclComm_t *nccl_comm, DSContext *ds_context, int world_size, int rank) {
+  ncclUniqueId nccl_id;
+  if (rank == 0) {
+    ncclGetUniqueId(&nccl_id);
+  }
+  std::string nccl_id_str = NCCLIdToString(nccl_id);
+  ds_context->coordinator->Broadcast(nccl_id_str);
+  nccl_id = StringToNCCLId(nccl_id_str);
+  ncclCommInitRank(nccl_comm, world_size, nccl_id, rank);
+}
+
+void Initialize(int rank, int world_size, int sample_worker_num, int subtensor_load_num) {
   LOG(INFO) << "Rank [" << rank << "] initializing DS context";
   auto* ds_context = DSContext::Global();
   ds_context->initialized = true;
@@ -60,29 +71,24 @@ void Initialize(int rank, int world_size) {
   ds_context->comm_coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size, comm_port));
   cudaSetDevice(rank);
 
-  int use_nccl = GetEnvParam("USE_NCCL", 0);
-  if (use_nccl == 0) {
-    wrapNvmlInit();
-    // Build our communication environment
-    SetupGpuCommunicationEnv();
-  }
-
+  // int use_nccl = GetEnvParam("USE_NCCL", 0);
+  // wrapNvmlInit();
+  // Build our communication environment
+  // SetupGpuCommunicationEnv();
   // Build NCCL environment
-  ncclUniqueId nccl_id, nccl_id_load;
-  if (rank == 0) {
-    ncclGetUniqueId(&nccl_id);
-    ncclGetUniqueId(&nccl_id_load);
+  
+  // init nccl communicators for sample workers
+  ds_context->sample_worker_num = sample_worker_num;
+  ds_context->sample_nccl_comm = std::unique_ptr<ncclComm_t[]>(new ncclComm_t[sample_worker_num]);
+  for (int i=0; i<sample_worker_num; i++) {
+    InitNcclComm(&(ds_context->sample_nccl_comm[i]), ds_context, world_size, rank);
   }
-  std::string nccl_id_str = NCCLIdToString(nccl_id);
-  std::string nccl_id_load_str = NCCLIdToString(nccl_id_load);
-  ds_context->coordinator->Broadcast(nccl_id_str);
-  nccl_id = StringToNCCLId(nccl_id_str);
-  ds_context->coordinator->Broadcast(nccl_id_load_str);
-  nccl_id_load = StringToNCCLId(nccl_id_load_str);
 
-  if(world_size >= 1) {
-    ncclCommInitRank(&ds_context->nccl_comm, world_size, nccl_id, rank);
-    ncclCommInitRank(&ds_context->nccl_comm_load, world_size, nccl_id_load, rank);
+  // init nccl communicators for load workers
+  ds_context->load_worker_num = subtensor_load_num;
+  ds_context->load_nccl_comm = std::unique_ptr<ncclComm_t[]>(new ncclComm_t[subtensor_load_num]);
+  for (int i=0; i<subtensor_load_num; i++) {
+    InitNcclComm(&(ds_context->load_nccl_comm[i]), ds_context, world_size, rank);
   }
 
   //init scheduler
@@ -98,14 +104,18 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   int rank = args[0];
   int world_size = args[1];
-  Initialize(rank, world_size);
+  int sample_worker_num = args[2];
+  int subtensor_load_num = args[3];
+  Initialize(rank, world_size, sample_worker_num, subtensor_load_num);
 });
 
 // Set dgl thread local stream
 DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetStream")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   void* s = args[0];
+  int thread_id = args[1];
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  thr_entry->thread_id = thread_id;
   thr_entry->stream = (cudaStream_t)s;
   LOG(INFO) << "Set local stream: " << thr_entry->stream;
   CUDACHECK(cudaStreamSynchronize(thr_entry->stream));

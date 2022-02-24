@@ -13,6 +13,7 @@ from ...ndarray import NDArray as DGLNDArray
 from ... import backend as F
 from ...base import DGLError
 from ...utils import to_dgl_context
+import threading
 
 __all__ = ['NodeDataLoader', 'EdgeDataLoader', 'GraphDataLoader',
            # Temporary exposure.
@@ -41,23 +42,27 @@ class _ScalarDataBatcherIter:
         self.batch_size = batch_size
         self.index = 0
         self.drop_last = drop_last
+        self.ds_lock = threading.Lock()
 
     # Make this an iterator for PyTorch Lightning compatibility
     def __iter__(self):
         return self
 
     def __next__(self):
+        self.ds_lock.acquire()
         num_items = self.dataset.shape[0]
         if self.index >= num_items:
+            self.ds_lock.release()
             raise StopIteration
         end_idx = self.index + self.batch_size
         if end_idx > num_items:
             if self.drop_last:
+                self.ds_lock.release()
                 raise StopIteration
             end_idx = num_items
         batch = self.dataset[self.index:end_idx]
         self.index += self.batch_size
-
+        self.ds_lock.release()
         return batch
 
 class _ScalarDataBatcher(th.utils.data.IterableDataset):
