@@ -214,14 +214,15 @@ void SampleUVA(IdArray frontier, IdArray row_idx, const HeteroGraphPtr hg, int f
 
 DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighborsUVA")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
-  IdArray row_idx = args[0];
-  HeteroGraphRef hg = args[1];
-  IdArray seeds = args[2];
-  int fanout = args[3];
-  bool replace = args[4];
+  // IdArray row_idx = args[0];
+  HeteroGraphRef hg = args[0];
+  IdArray seeds = args[1];
+  int fanout = args[2];
+  bool replace = args[3];
   IdArray neighbors, edges;
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   cudaStream_t s = thr_entry->stream;
+  auto row_idx = hg.sptr()->GetCSRMatrix(0).indptr;
   SampleUVA(seeds, row_idx, hg.sptr(), fanout, replace, &neighbors, &edges);
   CUDACHECK(cudaStreamSynchronize(s));
   IdType num_vertices = row_idx->shape[0];

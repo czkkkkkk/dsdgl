@@ -9,6 +9,7 @@
 
 #include "../c_api_common.h"
 #include "../graph/unit_graph.h"
+#include "../graph/heterograph.h"
 #include "context.h"
 #include "cuda/ds_kernel.h"
 #include "cuda/cuda_utils.h"
@@ -48,31 +49,15 @@ DGL_REGISTER_GLOBAL("ds.pin_graph._CAPI_DGLDSPinGraph")
   int rank = args[1];
   HeteroGraphPtr hg_ptr = hg.sptr();
   CSRMatrix mat = hg_ptr->GetCSRMatrix(0);
-  IdArray indptr = mat.indptr;
-  IdArray ret = IdArray::Empty({indptr->shape[0]}, indptr->dtype, DLContext({kDLGPU, rank}));
-  CUDACHECK(cudaMemcpy(ret.Ptr<uint64_t>(), indptr.Ptr<uint64_t>(), sizeof(uint64_t) * indptr->shape[0], cudaMemcpyHostToDevice));
-  CUDACHECK(cudaDeviceSynchronize());
-  IdArray indices = mat.indices;
-  printf("vertex number: %lu, edge number: %lu\n", indptr->shape[0], indices->shape[0]);
-  Register(indices);
-  *rv = ret;
+  mat.indptr = CreateShmArray(mat.indptr, mat.indptr->shape[0], "uva_graph_indptr");
+  mat.indices = CreateShmArray(mat.indices, mat.indices->shape[0], "uva_graph_indices");
+  int64_t n_vertices = hg_ptr->GetRelationGraph(0)->NumVertices(0);
+  int64_t n_edges = hg_ptr->GetRelationGraph(0)->NumEdges(0);
+  auto edge_ids = Range(0, n_edges, 64, {kDLGPU, rank});
+  auto ug = CreateFromCSR(1, n_vertices, n_vertices, mat.indptr, mat.indices, edge_ids);
+  auto new_hg = HeteroGraphPtr(new HeteroGraph(hg_ptr->meta_graph(), {ug}, {n_vertices}));
+  *rv = HeteroGraphRef(new_hg);
 });
-
-/*
-DGL_REGISTER_GLOBAL("ds.pin_graph._CAPI_DGLDSPinGraphTest")
-.set_body([] (DGLArgs args, DGLRetValue *rv) {
-  IdArray array = args[0];
-  const DLContext& dgl_context = array->ctx;
-  auto device = runtime::DeviceAPI::Get(dgl_context);
-  assert(dgl_context.device_type == kDLGPU);
-  printf("rank: %d\n", device);
-
-  uint64_t *data = array.Ptr<uint64_t>();
-  uint64_t size = array->shape[0];
-  TestInc(data, size);
-  CUDACHECK(cudaDeviceSynchronize());
-});
-*/
 
 }
 }

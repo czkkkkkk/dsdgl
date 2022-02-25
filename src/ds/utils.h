@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <dmlc/logging.h>
+#include <dgl/array.h>
 
 #include <cuda_runtime.h>
 
@@ -23,16 +24,17 @@
       LOG(FATAL) << "Cuda error " << cudaGetErrorString(e); \
     }                                                       \
   } while (false);
-  #define SYSCHECK(call, name)                                     \
-  do {                                                           \
-    int ret = -1;                                                \
-    while (ret == -1) {                                          \
-      SYSCHECKVAL(call, name, ret);                              \
-      if (ret == -1) {                                           \
-        LOG(ERROR) << "Got " << strerror(errno) << ", retrying"; \
-      }                                                          \
-    }                                                            \
-  } while (0);
+
+#define SYSCHECK(call, name)                                     \
+do {                                                           \
+  int ret = -1;                                                \
+  while (ret == -1) {                                          \
+    SYSCHECKVAL(call, name, ret);                              \
+    if (ret == -1) {                                           \
+      LOG(ERROR) << "Got " << strerror(errno) << ", retrying"; \
+    }                                                          \
+  }                                                            \
+} while (0);
 
 #define SYSCHECKVAL(call, name, retval)                                    \
   do {                                                                     \
@@ -67,6 +69,8 @@
       LOG(ERROR) << "Call to " << name << " failed : " << strerror(errno); \
     }                                                                      \
   } while (0);
+
+using namespace dgl::runtime;
 
 namespace dgl {
 namespace ds {
@@ -145,6 +149,15 @@ void SetEnvParam(const char* key, T value) {
 
 int GetAvailablePort();
 std::string GetHostName();
+
+/**
+ * @brief Create an IdArray on shared memory. The memory is created based on the array on the root process. However, other processes must have the correct data type for the array and correct size.
+ * @param arr IdArray
+ * @param size the number of element
+ * @param shm_name the name of the shared memory
+ * @return IdArray with shared memory
+ */
+IdArray CreateShmArray(IdArray arr, size_t size, const std::string& shm_name);
 
 }
 }

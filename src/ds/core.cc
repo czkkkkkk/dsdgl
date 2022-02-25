@@ -54,8 +54,10 @@ void Initialize(int rank, int world_size) {
   ds_context->initialized = true;
   ds_context->rank = rank;
   ds_context->world_size = world_size;
-  ds_context->coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size));
-  ds_context->comm_coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size, 12307));
+  int master_port = GetEnvParam("MASTER_PORT", 12633);
+  int comm_port = GetEnvParam("COMM_PORT", 12644);
+  ds_context->coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size, master_port));
+  ds_context->comm_coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size, comm_port));
   cudaSetDevice(rank);
 
   int use_nccl = GetEnvParam("USE_NCCL", 0);
