@@ -431,7 +431,7 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     
     scheduler->TryComm(comm_token);
     NCCLAllToAll<int64_t, ncclInt64>(send_sizes, range_seq, recv_sizes, range_seq, 1, rank, world_size, nccl_comm);
-    //CUDACHECK(cudaStreamSynchronize(stream));
+    CUDACHECK(cudaStreamSynchronize(stream));
     scheduler->FinishComm();
 
     auto host_send_offset = send_offset.CopyTo(host_dgl_context, stream);
@@ -449,7 +449,7 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     } else {
       NCCLAllToAll<int64_t, ncclInt64>(input, host_send_offset, recvbuff, host_recv_offset, expand_size, rank, world_size, nccl_comm);
     }
-    //CUDACHECK(cudaStreamSynchronize(stream));
+    CUDACHECK(cudaStreamSynchronize(stream));
     scheduler->FinishComm();
     CUDACHECK(cudaStreamSynchronize(data_copy_stream));
     return {recvbuff, recv_offset};
