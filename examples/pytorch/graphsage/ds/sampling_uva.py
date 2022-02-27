@@ -29,8 +29,7 @@ def cleanup():
     dist.destroy_process_group()
 
 class NeighborSampler(object):
-    def __init__(self, row_idx, g, num_vertices, fanouts, sample_neighbors, device):
-        self.row_idx = row_idx
+    def __init__(self, g, num_vertices, fanouts, sample_neighbors, device):
         self.g = g
         self.num_vertices = num_vertices
         self.fanouts = fanouts
@@ -45,7 +44,7 @@ class NeighborSampler(object):
         # seeds = seeds.to(self.device)
         for fanout in self.fanouts:
             # For each seed node, sample ``fanout`` neighbors.
-            frontier = self.sample_neighbors(self.row_idx, self.g, seeds, self.num_vertices, fanout)
+            frontier = self.sample_neighbors(self.g, seeds, self.num_vertices, fanout)
             block = dgl.to_block(frontier, seeds)
             seeds = block.srcdata[dgl.NID]
             blocks.insert(0, block)
@@ -54,7 +53,7 @@ class NeighborSampler(object):
 def run(rank, args, data):
     th.cuda.set_device(rank)
     setup(rank, args.n_ranks)
-    #ds.init(rank, args.n_ranks)
+    ds.init(rank, args.n_ranks)
     
     n_classes, train_g = data
     train_nfeat = train_g.ndata.pop('features')
@@ -72,9 +71,9 @@ def run(rank, args, data):
     train_nid = train_nid.to(rank)
     train_g = train_g.formats(['csr'])
 
-    # row_idx on gpu, cols in train_g on uva
-    row_idx = ds.pin_graph(train_g, rank)
-    sampler = NeighborSampler(row_idx, train_g, num_vertices,
+    # Build a new graph where the csr matrix is on shared memory 
+    train_g = ds.pin_graph(train_g, rank)
+    sampler = NeighborSampler(train_g, num_vertices,
                               [int(fanout) for fanout in args.fan_out.split(',')],
                               dgl.ds.sample_neighbors_uva, rank)
 

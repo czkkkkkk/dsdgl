@@ -188,6 +188,8 @@ def run(rank, args, train_label):
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes, len(fanout), th.relu, args.dropout)
     model = model.to(device)
+    if args.n_ranks > 1:
+        model = DDP(model, device_ids=[rank], output_device=rank)
     loss_fcn = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     

@@ -11,8 +11,8 @@ __all__ = [
     ]
 
 def pin_graph(g, rank):
-  row_idx = _CAPI_DGLDSPinGraph(g._graph, rank)
-  return row_idx
+  g._graph = _CAPI_DGLDSPinGraph(g._graph, rank)
+  return g
 
 def test_array(array):
   _CAPI_DGLDSPinGraphTest(array)

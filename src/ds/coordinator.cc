@@ -17,6 +17,7 @@ Coordinator::Coordinator(int rank, int world_size, int port) {
   n_peers_ = world_size;
   is_root_ = rank == 0? true: false;
   zmq_ctx_ = std::unique_ptr<zmq::context_t>(new zmq::context_t());
+  LOG(INFO) << "Coordinator initializing port: " << port;
   _Initialize(port);
 }
 
@@ -32,7 +33,7 @@ void Coordinator::_Initialize(int mport) {
 
   // 2. Root setup the socket receving msg from all ranks
   // NOTE: currently assume all ranks are on the same machine
-  int master_port = GetEnvParam("MASTER_PORT", mport);
+  int master_port = mport;
   auto root_bind_addr = std::string("tcp://*:") + std::to_string(master_port);
   auto root_conn_addr = std::string("tcp://") + GetHostName() + ":" + std::to_string(master_port);
   if (is_root_) {

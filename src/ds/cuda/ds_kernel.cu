@@ -301,9 +301,8 @@ void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, in
   auto dgl_ctx = frontier->ctx;
   int n_frontier = frontier->shape[0];
   // IdArray edge_offset = IdArray::Empty({n_frontier + 1}, frontier->dtype, dgl_ctx);
-  IdArray edge_offset = Full<IdType>(fanout, n_frontier + 1, dgl_ctx);
-  auto edge_offset_ptr = thrust::device_ptr<IdType>(edge_offset.Ptr<IdType>());
-  thrust::exclusive_scan(edge_offset_ptr, edge_offset_ptr + n_frontier + 1, edge_offset_ptr);
+  IdArray edge_offset = Full<IdType>(fanout, n_frontier, dgl_ctx);
+  edge_offset = CumSum(edge_offset, true);
   *neighbors = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
 
   constexpr int BLOCK_ROWS = 512 / WARP_SIZE;

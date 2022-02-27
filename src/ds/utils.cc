@@ -8,6 +8,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <dmlc/logging.h>
+#include <dlpack/dlpack.h>
+
+#include "./conn/shm.h"
+#include "./context.h"
 
 namespace dgl {
 namespace ds {
@@ -94,6 +98,55 @@ uint64_t getHostHash(void) {
   uname[hlen + len] = '\0';
 
   return getHash(uname);
+}
+
+struct DSShmDLManagerCtx {
+  int rank;
+  std::string shm_name;
+};
+
+IdArray CreateShmArray(IdArray arr, size_t size, const std::string& shm_name) {
+  void* host_ptr, *dev_ptr;
+
+  auto* ds_ctx = DSContext::Global();
+  int rank = ds_ctx->rank;
+  int create = rank == 0;
+  if(rank == 0) {
+    ds_shm_open(shm_name.c_str(), size * arr->dtype.bits / 8, &host_ptr, &dev_ptr, create);
+    memcpy(host_ptr, arr.Ptr<void>(), size * arr->dtype.bits / 8);
+  }
+  ds_ctx->coordinator->Barrier();
+  if(rank != 0) {
+    ds_shm_open(shm_name.c_str(), size * arr->dtype.bits / 8, &host_ptr, &dev_ptr, create);
+  }
+  
+  DLTensor dl_tensor;
+  dl_tensor.data = dev_ptr;
+  dl_tensor.ndim = 1;
+  dl_tensor.ctx = {kDLGPU, rank};
+  dl_tensor.shape = new int64_t[1];
+  dl_tensor.shape[0] = size;
+  dl_tensor.dtype = arr->dtype;
+  dl_tensor.byte_offset = 0;
+  dl_tensor.strides = nullptr;
+  DLManagedTensor managed_tensor;
+  managed_tensor.dl_tensor = dl_tensor;
+  auto* manager_ctx = new DSShmDLManagerCtx;
+  manager_ctx->rank = rank;
+  manager_ctx->shm_name = shm_name;
+  managed_tensor.manager_ctx = manager_ctx;
+  managed_tensor.deleter = [](DLManagedTensor* self) {
+    DSShmDLManagerCtx* ctx = static_cast<DSShmDLManagerCtx*>(self->manager_ctx);
+    if(ctx->rank == 0) {
+      SYSCHECK(shm_unlink(ctx->shm_name.c_str()), "shm_unlink");
+    }
+    delete self->dl_tensor.shape;
+    delete self->manager_ctx;
+  };
+  if (rank != 0) {
+    SYSCHECK(shm_unlink(shm_name.c_str()), "shm_unlink");
+  }
+  return IdArray::FromDLPack(&managed_tensor);
 }
 
 }
