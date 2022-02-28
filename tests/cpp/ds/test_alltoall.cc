@@ -119,7 +119,7 @@ TEST(DSSampling, Alltoall64bits) {
     }
   }
   _TestAlltoall(rank, world_size, input_all);
-  _TestAlltoall(rank, world_size, input_all, 602);
+  _TestAlltoall(rank, world_size, input_all, 11);
 }
 
 TEST(DSSampling, AlltoallNCCL) {
@@ -167,12 +167,12 @@ TEST(DSSampling, Alltoall32bits) {
   input_all.resize(world_size, Vec2d<IdType>(world_size));
   for(int i = 0; i < world_size; ++i) {
     for(int j = 0; j < world_size; ++j) {
-      int size = rand() % 100000;
+      int size = GetEnvParam("ALLTOALL_BENCHMARK_SIZE", 512);
       input_all[i][j] = RandVec<IdType>(size);
     }
   }
   _TestAlltoall(rank, world_size, input_all);
-  _TestAlltoall(rank, world_size, input_all, 602);
+  _TestAlltoall(rank, world_size, input_all, 31);
 }
 
 template<typename T>

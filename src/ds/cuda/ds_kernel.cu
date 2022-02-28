@@ -43,8 +43,6 @@ using namespace dgl::aten;
 namespace dgl {
 namespace ds {
 
-static constexpr int MAX_RECV_BUFFER_SIZE = 8 * 1000 * 250 * 10;
-
 __global__
 void _GidToLidKernel(IdType* global_ids, size_t size, IdType* min_vids, int rank) {
   int idx = blockDim.x * blockIdx.x + threadIdx.x;
