@@ -2,6 +2,8 @@
 
 #include <dmlc/logging.h>
 #include <thread>
+#define _CG_ABI_EXPERIMENTAL // enable experimental API
+#include <cooperative_groups.h>
 
 #include "../comm/comm_info.h"
 #include "../utils.h"
@@ -11,6 +13,8 @@
 #include "../schedule.h"
 
 using namespace dgl::runtime;
+using namespace cooperative_groups;
+
 
 namespace dgl {
 namespace ds {
@@ -46,6 +50,8 @@ class WaitFlag {
       : flag(flag) {
       }
   __device__ uint64_t get_flag() { return *flag; }
+  __device__ __forceinline__ void init() { post(FLAG_INIT); }
+  __device__ __forceinline__ void wait_init() { wait(FLAG_INIT); }
   __device__ __forceinline__ void unset() { post(FLAG_UNUSED); }
   __device__ __forceinline__ void wait_unset() { wait(FLAG_UNUSED); }
   
@@ -55,7 +61,8 @@ class WaitFlag {
     }
   }
   __device__ __forceinline__ void post(uint64_t val) { *flag = val; }
-  const static uint64_t FLAG_UNUSED = ~0ull >> 1;
+  static constexpr uint64_t FLAG_INIT = ~0ull >> 1;
+  static constexpr uint64_t FLAG_UNUSED = (~0ull >> 1) - 1;
 };
 
 struct CopyArgs {
@@ -77,16 +84,22 @@ struct CopyArgs {
   WaitFlag ready, done, next_ready, prev_done;
 };
 
-template<typename T>
+
+template<typename T, int GroupSize>
 __device__
 void _Copy(CopyArgs args) {
-  static const int FETCH_BYTES = sizeof(T);
+  __shared__ experimental::block_tile_memory<8> shared;
+  thread_block thb = experimental::this_thread_block(shared);
+  auto thread_group = experimental::tiled_partition<GroupSize>(thb);
+
+  constexpr int FETCH_BYTES = sizeof(T);
   int bid = blockIdx.x;
   if (args.tid % args.group_size == 0) {
-    args.ready.post(1);
-    args.next_ready.wait(1);
+    args.ready.init();
+    args.next_ready.wait_init();
   }
-  __syncthreads();
+  thread_group.sync();
+  // __syncthreads();
   int tid = args.tid;
   int buff_ptr = args.tid % args.group_size;
   int send_size = args.send_size / FETCH_BYTES;
@@ -100,12 +113,14 @@ void _Copy(CopyArgs args) {
     buff_ptr += args.group_size;
   }
   __threadfence_system();
-  __syncthreads();
+  thread_group.sync();
+  // __syncthreads();
   if (args.tid % args.group_size == 0) {
     args.done.post(1);
     args.prev_done.wait(1);
   }
-  __syncthreads();
+  thread_group.sync();
+  // __syncthreads();
 
   // ------- Receive -----------
   tid = args.tid;
@@ -120,16 +135,20 @@ void _Copy(CopyArgs args) {
     tid += args.n_threads;
     buff_ptr += args.group_size;
   }
-  __syncthreads();
+  thread_group.sync();
+  // __syncthreads();
   if (args.tid % args.group_size == 0) {
     args.ready.unset();
     args.next_ready.wait_unset();
     args.done.unset();
     args.prev_done.wait_unset();
   }
-  __syncthreads();
+  thread_group.sync();
+  // __syncthreads();
 }
 
+// Deprecated
+template<int GroupSize>
 __device__
 void _CopySendSize(int64_t* send_sizes, int64_t* recv_sizes, int peer_id, int local_tid, int n_threads_per_conn, ConnInfo* conn_info) {
   CopyArgs copy_args(local_tid, n_threads_per_conn, conn_info->my_ready, conn_info->my_done, conn_info->next_ready, conn_info->prev_done);
@@ -140,10 +159,10 @@ void _CopySendSize(int64_t* send_sizes, int64_t* recv_sizes, int peer_id, int lo
   copy_args.output = recv_sizes + peer_id;
   copy_args.my_recvbuff = conn_info->my_recv_buff;
   copy_args.next_recvbuff = conn_info->next_recv_buff;
-  _Copy<int64_t>(copy_args);
+  _Copy<int64_t, GroupSize>(copy_args);
 }
 
-template<typename T>
+template<typename T, int GroupSize>
 __device__
 void _CopyData(void* input, int64_t send_size, void* output, int64_t recv_size, int tid, int n_threads, int group_size, ConnInfo* conn_info) {
   CopyArgs copy_args(tid, n_threads, conn_info->my_ready, conn_info->my_done, conn_info->next_ready, conn_info->prev_done);
@@ -154,7 +173,7 @@ void _CopyData(void* input, int64_t send_size, void* output, int64_t recv_size, 
   copy_args.output = output;
   copy_args.my_recvbuff = conn_info->my_recv_buff;
   copy_args.next_recvbuff = conn_info->next_recv_buff;
-  _Copy<T>(copy_args);
+  _Copy<T, GroupSize>(copy_args);
 }
 
 __device__ 
@@ -164,7 +183,7 @@ uint get_smid() {
   return ret;
 }
 
-template<typename T, bool exclusive>
+template<typename T, bool exclusive, int GroupSize>
 __global__
 void _AlltoallKernel(AlltoallArgs args) {
   int bid = blockIdx.x;
@@ -190,7 +209,7 @@ void _AlltoallKernel(AlltoallArgs args) {
   int64_t send_size = (send_offset[peer_id+1] - send_offset[peer_id]) * args.n_bytes;
   int64_t recv_size = (recv_offset[peer_id+1] - recv_offset[peer_id]) * args.n_bytes;
   int global_tid = bid * args.n_threads_per_conn + local_tid;
-  _CopyData<T>(sendbuff, send_size, recvbuff, recv_size, global_tid, gridDim.x * args.n_threads_per_conn, args.n_threads_per_conn, conn_info);
+  _CopyData<T, GroupSize>(sendbuff, send_size, recvbuff, recv_size, global_tid, gridDim.x * args.n_threads_per_conn, args.n_threads_per_conn, conn_info);
 }
 
 __global__ 
@@ -210,6 +229,44 @@ IdArray Diff(IdArray prefix_sum) {
   return ret;
 }
 
+#define ALLTOALL_SWITCH_ALIGN_SIZE(val, AlignType, ...) do {                 \
+  if ((val) == 4) {                                             \
+    using AlignType = int;                                      \
+    {__VA_ARGS__}                                               \
+  }                                                             \
+  else if((val) == 8) {                                         \
+    using AlignType = int64_t;                                  \
+    {__VA_ARGS__}                                               \
+  } else {                                                      \
+    LOG(FATAL) << "Align size error";                           \
+  }                                                             \
+} while (0)
+
+#define ALLTOALL_SWITCH_GROUP_SIZE(val, GroupSize, ...) do {                 \
+  if ((val) == 16) {                                            \
+    constexpr int GroupSize = 16;                               \
+    {__VA_ARGS__}                                               \
+  }                                                             \
+  else if((val) == 64) {                                       \
+    constexpr int GroupSize = 64;                              \
+    {__VA_ARGS__}                                               \
+  }                                                             \
+  else if((val) == 128) {                                       \
+    constexpr int GroupSize = 128;                              \
+    {__VA_ARGS__}                                               \
+  }                                                             \
+  else if((val) == 256) {                                       \
+    constexpr int GroupSize = 256;                              \
+    {__VA_ARGS__}                                               \
+  }                                                             \
+  else if((val) == 512) {                                       \
+    constexpr int GroupSize = 512;                              \
+    {__VA_ARGS__}                                               \
+  } else {                                                      \
+    LOG(FATAL) << "Unsupport alltoall group size" << (val);     \
+  }                                                             \
+} while (0)
+
 void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_t* recv_offset, int n_bytes, int align_size, CommInfo* comm_info, int rank, int world_size) {
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   AlltoallArgs args;
@@ -228,19 +285,13 @@ void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_
   dim3 grid_dim(comm_info->n_block);
   dim3 block_dim(n_threads);
   void *kargs[] = {&args};
-  cudaError_t e;
-  if(align_size == 4) {
-    e = cudaLaunchKernel((void *)_AlltoallKernel<int, true>,
-                                    grid_dim, block_dim, kargs, 0, thr_entry->stream);
-  } else if(align_size == 8) {
-    CHECK(n_bytes % 8 == 0);
-    e = cudaLaunchKernel((void *)_AlltoallKernel<int64_t, true>,
-                                    grid_dim, block_dim, kargs, 0, thr_entry->stream);
-  } else {
-    LOG(FATAL) << "Unsupported bytes: " << n_bytes;
-  }
+  ALLTOALL_SWITCH_ALIGN_SIZE(align_size, AlignType, {
+    ALLTOALL_SWITCH_GROUP_SIZE(args.n_threads_per_conn, GroupSize, {
+      CUDACHECK(cudaLaunchKernel((void *)_AlltoallKernel<AlignType, true, GroupSize>,
+                                      grid_dim, block_dim, kargs, 0, thr_entry->stream));
+    });
+  });
 
-  CUDACHECKERR(e);
 }
 
 IdArray ExchangeSendSizes(IdArray send_offset, CommInfo* comm_info, int rank, int world_size) {
@@ -262,9 +313,12 @@ IdArray ExchangeSendSizes(IdArray send_offset, CommInfo* comm_info, int rank, in
   dim3 grid_dim(1);
   dim3 block_dim(n_threads);
   void *kargs[] = {&args};
-  CUDACHECK(cudaLaunchKernel((void *)_AlltoallKernel<IdType, false>,
-                                  grid_dim, block_dim, kargs, 0, stream));
-  cudaStreamSynchronize(stream);
+  ALLTOALL_SWITCH_ALIGN_SIZE(sizeof(IdType), AlignType, {
+    ALLTOALL_SWITCH_GROUP_SIZE(args.n_threads_per_conn, GroupSize, {
+      CUDACHECK(cudaLaunchKernel((void *)_AlltoallKernel<AlignType, false, GroupSize>,
+                                      grid_dim, block_dim, kargs, 0, stream));
+    });
+  });
   auto recv_offset = CumSum(recv_sizes, true);
   return recv_offset;
 }
