@@ -29,7 +29,7 @@ struct SendDevMem {
   };
 };
 
-struct __align__(16) RecvDevMem {
+struct __align__(256) RecvDevMem {
   union {
     struct {
       uint64_t ready;

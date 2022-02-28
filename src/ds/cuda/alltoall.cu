@@ -19,9 +19,6 @@ using namespace cooperative_groups;
 namespace dgl {
 namespace ds {
 
-// 500 MB
-static constexpr int MAX_RECV_BUFFER_SIZE = 500 * 1024 * 1024;
-
 __device__
 void sleep(int clock_count) {
   clock_t start_clock = clock();
@@ -82,8 +79,11 @@ struct CopyArgs {
   void *my_recvbuff, *next_recvbuff;
   int send_size, recv_size;
   WaitFlag ready, done, next_ready, prev_done;
+  
+  int rank, peer_id;
 };
 
+#define DIVUP(x, y) ((x)+(y)-1)/(y)
 
 template<typename T, int GroupSize>
 __device__
@@ -93,58 +93,65 @@ void _Copy(CopyArgs args) {
   auto thread_group = experimental::tiled_partition<GroupSize>(thb);
 
   constexpr int FETCH_BYTES = sizeof(T);
+  constexpr int n_per_substage = RECV_BUFFER_SIZE / FETCH_BYTES;
+  int send_size = args.send_size / FETCH_BYTES;
+  int recv_size = args.recv_size / FETCH_BYTES;
+  int send_substages = DIVUP(send_size, n_per_substage);
+  int recv_substages = DIVUP(recv_size, n_per_substage);
+  int n_substages = send_substages > recv_substages? send_substages:recv_substages;
   int bid = blockIdx.x;
-  if (args.tid % args.group_size == 0) {
+  int local_tid = args.tid % args.group_size;
+  if (local_tid == 0) {
+    args.done.init();
+    args.prev_done.wait_init();
     args.ready.init();
     args.next_ready.wait_init();
   }
   thread_group.sync();
-  // __syncthreads();
-  int tid = args.tid;
-  int buff_ptr = args.tid % args.group_size;
-  int send_size = args.send_size / FETCH_BYTES;
+  int send_ptr = args.tid;
   T* input = (T*)args.input;
   T* next_recvbuff = (T*)args.next_recvbuff;
-  while(tid < send_size) {
-    T val = vFetch(input + tid);
-    vStore(next_recvbuff + buff_ptr, val);
-    // args.next_recvbuff[buff_ptr] = args.input[tid];
-    tid += args.n_threads;
-    buff_ptr += args.group_size;
-  }
-  __threadfence_system();
-  thread_group.sync();
-  // __syncthreads();
-  if (args.tid % args.group_size == 0) {
-    args.done.post(1);
-    args.prev_done.wait(1);
-  }
-  thread_group.sync();
-  // __syncthreads();
 
-  // ------- Receive -----------
-  tid = args.tid;
-  buff_ptr = args.tid % args.group_size;
-  int recv_size = args.recv_size / FETCH_BYTES;
+  int recv_ptr = args.tid;
   T *my_recvbuff = (T*) args.my_recvbuff;
   T *output = (T*)args.output;
-  while(tid < recv_size) {
-    T val = vFetch(my_recvbuff + buff_ptr);
-    vStore(output + tid, val);
-    // args.output[tid] = args.my_recvbuff[buff_ptr]; 
-    tid += args.n_threads;
-    buff_ptr += args.group_size;
+
+  for(int substage = 0; substage < n_substages; ++substage){
+    int send_buff_ptr = local_tid;
+    while(send_ptr < send_size && send_buff_ptr < n_per_substage) {
+      T val = vFetch(input + send_ptr);
+      vStore(next_recvbuff + send_buff_ptr, val);
+      send_ptr += args.n_threads;
+      send_buff_ptr += args.group_size;
+    }
+    thread_group.sync();
+    __threadfence_system();
+    if (local_tid == 0) {
+      args.done.post(substage);
+      args.prev_done.wait(substage);
+    }
+    thread_group.sync();
+    int recv_buff_ptr = local_tid;
+    while(recv_ptr < recv_size && recv_buff_ptr < n_per_substage) {
+      T val = vFetch(my_recvbuff + recv_buff_ptr);
+      vStore(output + recv_ptr, val);
+      recv_ptr += args.n_threads;
+      recv_buff_ptr += args.group_size;
+    }
+    thread_group.sync();
+    if (local_tid == 0) {
+      args.ready.post(substage);
+      args.next_ready.wait(substage);
+    }
+    thread_group.sync();
   }
-  thread_group.sync();
-  // __syncthreads();
-  if (args.tid % args.group_size == 0) {
-    args.ready.unset();
-    args.next_ready.wait_unset();
+  if (local_tid == 0) {
     args.done.unset();
     args.prev_done.wait_unset();
+    args.ready.unset();
+    args.next_ready.wait_unset();
   }
   thread_group.sync();
-  // __syncthreads();
 }
 
 // Deprecated
@@ -164,7 +171,7 @@ void _CopySendSize(int64_t* send_sizes, int64_t* recv_sizes, int peer_id, int lo
 
 template<typename T, int GroupSize>
 __device__
-void _CopyData(void* input, int64_t send_size, void* output, int64_t recv_size, int tid, int n_threads, int group_size, ConnInfo* conn_info) {
+void _CopyData(void* input, int64_t send_size, void* output, int64_t recv_size, int tid, int n_threads, int group_size, ConnInfo* conn_info, int rank, int peer_id) {
   CopyArgs copy_args(tid, n_threads, conn_info->my_ready, conn_info->my_done, conn_info->next_ready, conn_info->prev_done);
   copy_args.group_size = group_size;
   copy_args.send_size = send_size;
@@ -173,6 +180,8 @@ void _CopyData(void* input, int64_t send_size, void* output, int64_t recv_size, 
   copy_args.output = output;
   copy_args.my_recvbuff = conn_info->my_recv_buff;
   copy_args.next_recvbuff = conn_info->next_recv_buff;
+  copy_args.rank = rank;
+  copy_args.peer_id = peer_id;
   _Copy<T, GroupSize>(copy_args);
 }
 
@@ -209,7 +218,7 @@ void _AlltoallKernel(AlltoallArgs args) {
   int64_t send_size = (send_offset[peer_id+1] - send_offset[peer_id]) * args.n_bytes;
   int64_t recv_size = (recv_offset[peer_id+1] - recv_offset[peer_id]) * args.n_bytes;
   int global_tid = bid * args.n_threads_per_conn + local_tid;
-  _CopyData<T, GroupSize>(sendbuff, send_size, recvbuff, recv_size, global_tid, gridDim.x * args.n_threads_per_conn, args.n_threads_per_conn, conn_info);
+  _CopyData<T, GroupSize>(sendbuff, send_size, recvbuff, recv_size, global_tid, gridDim.x * args.n_threads_per_conn, args.n_threads_per_conn, conn_info, rank, peer_id);
 }
 
 __global__ 
@@ -357,7 +366,6 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     auto* ds_context = DSContext::Global();
     auto dgl_context = input->ctx;
     int type_bytes = input->dtype.bits / 8;
-    auto recvbuff = IdArray::Empty({MAX_RECV_BUFFER_SIZE / type_bytes}, input->dtype, dgl_context);
 
     // NOTE: to guarantee the send_offset is ready
     CUDACHECK(cudaStreamSynchronize(stream));
@@ -369,9 +377,12 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     } else {
       comm_info = &ds_context->comm_info_load;
     }
-
     scheduler->TryComm(comm_token);
     auto recv_offset = ExchangeSendSizes(send_offset, comm_info, rank, world_size);
+    auto host_recv_offset = recv_offset.CopyTo({kDLCPU, 0}, stream);
+    CUDACHECK(cudaStreamSynchronize(stream));
+    IdType total_recv_size = host_recv_offset.Ptr<IdType>()[world_size] * expand_size;
+    auto recvbuff = IdArray::Empty({total_recv_size}, input->dtype, dgl_context);
     CUDACHECK(cudaStreamSynchronize(stream));
     scheduler->FinishComm();
 
@@ -383,18 +394,14 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     }
 
     // send data to myself in parallel
-    auto host_recv_offset = recv_offset.CopyTo({kDLCPU, 0}, data_copy_stream);
-    CUDACHECK(cudaStreamSynchronize(data_copy_stream));
     auto* host_send_offset_ptr = host_send_offset.Ptr<IdType>();
     auto* host_recv_offset_ptr = host_recv_offset.Ptr<IdType>();
-    CHECK_LE(host_recv_offset_ptr[world_size] * expand_size * input->dtype.bits / 8, MAX_RECV_BUFFER_SIZE);
 
     int n_send_to_myself = host_send_offset_ptr[rank+1] - host_send_offset_ptr[rank];
     CUDACHECK(cudaMemcpyAsync(recvbuff.Ptr<void>() + host_recv_offset_ptr[rank] * expand_size * type_bytes, input.Ptr<void>() + host_send_offset_ptr[rank] * expand_size * type_bytes, n_send_to_myself * type_bytes * expand_size, cudaMemcpyDeviceToDevice, data_copy_stream));
 
     CUDACHECK(cudaStreamSynchronize(stream));
     CUDACHECK(cudaStreamSynchronize(data_copy_stream));
-    recvbuff = recvbuff.CreateView({(signed long) host_recv_offset_ptr[world_size] * expand_size}, input->dtype);
     return {recvbuff, recv_offset};
   } else {
     // NCCL
