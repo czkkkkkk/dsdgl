@@ -105,12 +105,16 @@ struct DSShmDLManagerCtx {
   std::string shm_name;
 };
 
-IdArray CreateShmArray(IdArray arr, size_t size, const std::string& shm_name) {
+IdArray CreateShmArray(IdArray arr, const std::string& shm_name) {
   void* host_ptr, *dev_ptr;
 
   auto* ds_ctx = DSContext::Global();
   int rank = ds_ctx->rank;
   int create = rank == 0;
+  auto* coor = DSContext::Global()->coordinator.get();
+  size_t size = arr->shape[0];
+  coor->Broadcast(size);
+
   if(rank == 0) {
     ds_shm_open(shm_name.c_str(), size * arr->dtype.bits / 8, &host_ptr, &dev_ptr, create);
     memcpy(host_ptr, arr.Ptr<void>(), size * arr->dtype.bits / 8);
@@ -144,7 +148,7 @@ IdArray CreateShmArray(IdArray arr, size_t size, const std::string& shm_name) {
     delete self->manager_ctx;
   };
   if (rank != 0) {
-    SYSCHECK(shm_unlink(shm_name.c_str()), "shm_unlink");
+    // SYSCHECK(shm_unlink(shm_name.c_str()), "shm_unlink");
   }
   return IdArray::FromDLPack(&managed_tensor);
 }

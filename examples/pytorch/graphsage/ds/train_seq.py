@@ -26,7 +26,7 @@ from queue import Queue
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12378'
+    os.environ['MASTER_PORT'] = '12478'
 
     # initialize the process group
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
@@ -95,15 +95,17 @@ class SequentialQueue(object):
       self.put(None)
 
 class Sampler(Thread):
-  def __init__(self, dataloader, features, labels, min_vids, pc_queue, rank, num_epochs):
+  def __init__(self, dataloader, dev_feats, labels, min_vids, pc_queue, rank, num_epochs, shared_feats=None, feat_pos_map=None):
     Thread.__init__(self)
     self.rank = rank
     self.dataloader = dataloader
-    self.features = features
+    self.dev_feats = dev_feats
     self.labels = labels
     self.min_vids = min_vids
     self.pc_queue = pc_queue
     self.num_epochs = num_epochs
+    self.shared_feats = shared_feats
+    self.feat_pos_map = feat_pos_map
   
   def run(self):
     th.cuda.set_device(self.rank)
@@ -116,7 +118,8 @@ class Sampler(Thread):
         for step, (input_nodes, seeds, blocks) in enumerate(self.dataloader):
           # batch_inputs = th.ones([input_nodes.shape[0], self.features.shape[1]], dtype=self.features.dtype, device=self.rank)
           # batch_labels = th.ones([seeds.shape[0]], dtype=self.labels.dtype, device=self.rank)
-          batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
+          # batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
+          batch_inputs, batch_labels = dgl.ds.load_subtensor(self.dev_feats, self.labels, input_nodes, seeds, self.min_vids, self.shared_feats, self.feat_pos_map)
           s.synchronize()
           self.pc_queue.put((batch_inputs, batch_labels, blocks))
           self.pc_queue.get_lock()
@@ -135,6 +138,7 @@ def run(rank, args, train_label):
 
     g = dgl.add_self_loop(g)
 
+
     num_vertices = gpb._max_node_ids[-1]
     #test_sampling(num_vertices, g, rank)
     #time.sleep(2)
@@ -150,15 +154,15 @@ def run(rank, args, train_label):
 
     # print('# batch: ', train_nid.size()[0] / args.batch_size)
     th.distributed.barrier()
+    dev_feats, shared_feats, feat_pos_map = dgl.ds.cache_feats(g, node_feats['_N/features'], args.cache_ratio, rank)
     #tansfer graph and train nodes to gpu
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
     train_g = g.formats(['csr'])
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
     train_g = train_g.to(device)
-    train_feature = node_feats['_N/features']
-    in_feats = train_feature.shape[1]
-    train_feature = train_feature.to(device)
+    # dev_feats = node_feats['_N/features'].to(device)
+    in_feats = dev_feats.shape[1]
     train_label = train_label.to(device)
     global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu
@@ -198,7 +202,7 @@ def run(rank, args, train_label):
     total = 0
     skip_epoch = 5
     data_buffer = SequentialQueue()
-    sample_worker = Sampler(dataloader, train_feature, train_label, min_vids, data_buffer, rank, args.num_epochs)
+    sample_worker = Sampler(dataloader, dev_feats, train_label, min_vids, data_buffer, rank, args.num_epochs, shared_feats, feat_pos_map)
 
     s = th.cuda.Stream(device=device)
     print('cuda stream', s)
@@ -257,6 +261,7 @@ if __name__ == '__main__':
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=10, type=int, help='Epochs')
     parser.add_argument('--lr', type=float, default=0.003)
+    parser.add_argument('--cache_ratio', default=100, type=int, help='Percentages of features on GPUs')
     args = parser.parse_args()
     
     all_labels = th.tensor([])
