@@ -385,12 +385,14 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     scheduler->TryComm(thread_id);
     auto recv_offset = ExchangeSendSizes(send_offset, comm_info, rank, world_size, cuda_launch_lock);
     //while (*cuda_launch_lock > 0);
+    printf("rank %d thread %d launch size kernel\n", rank, thread_id);
     CUDACHECK(cudaStreamSynchronize(stream));
-    CHECK_EQ(*cuda_launch_lock, 0);
+    printf("rank %d thread %d finish size kernel\n", rank, thread_id);
+    //CHECK_EQ(*cuda_launch_lock, 0);
     scheduler->FinishComm();
 
-    CUDACHECK(cudaStreamSynchronize(stream));
     auto host_recv_offset = recv_offset.CopyTo({kDLCPU, 0}, stream);
+    CUDACHECK(cudaStreamSynchronize(stream));
     IdType total_recv_size = host_recv_offset.Ptr<IdType>()[world_size] * expand_size;
     auto recvbuff = IdArray::Empty({total_recv_size}, input->dtype, dgl_context);
 
@@ -398,9 +400,11 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     if(world_size > 1) {
       scheduler->TryComm(thread_id);
       CustomAlltoall(input.Ptr<void>(), send_offset.Ptr<IdType>(), recvbuff.Ptr<void>(), recv_offset.Ptr<IdType>(), type_bytes * expand_size, input->dtype.bits / 8, comm_info, rank, world_size, cuda_launch_lock);
+      printf("rank %d thread %d launch data kernel\n", rank, thread_id);
       //while (*cuda_launch_lock > 0);
       CUDACHECK(cudaStreamSynchronize(stream));
-      CHECK_EQ(*cuda_launch_lock, 0);
+      printf("rank %d thread %d finish data kernel\n", rank, thread_id);
+      //CHECK_EQ(*cuda_launch_lock, 0);
       scheduler->FinishComm();
     }
 

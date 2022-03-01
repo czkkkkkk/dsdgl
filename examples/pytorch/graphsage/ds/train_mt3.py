@@ -22,7 +22,6 @@ from model import SAGE
 import threading
 from threading import Thread
 from queue import Queue
-#from dgl.ds.graph_partition_book import *
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -281,6 +280,7 @@ def run(rank, args, train_label):
         cur_batches = total_batches - acc_batches
       else:
         cur_batches = total_batches // sampler_number
+      print("rank", rank, "sampler", i, "batches", cur_batches)
       acc_batches += cur_batches
       thread_id = i
       sample_workers.append(Sampler(my_dataloader, sample_data_buffer, rank, args.num_epochs, thread_id, sampler_number, cur_batches))
@@ -293,6 +293,7 @@ def run(rank, args, train_label):
         cur_batches = total_batches - acc_batches
       else:
         cur_batches = total_batches // loader_number
+      print("rank", rank, "loader", i, "batches", cur_batches)
       acc_batches += cur_batches
       thread_id = i + sampler_number
       load_workers.append(SubtensorLoader(train_feature, train_label, min_vids, sample_data_buffer, subtensor_data_buffer, rank, args.num_epochs, thread_id, loader_number, cur_batches))
