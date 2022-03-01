@@ -164,6 +164,7 @@ class CUDAThreadEntry {
   cudaStream_t data_copy_stream{nullptr};
   /*! \brief worker thread id for DS */
   int thread_id;
+  int cuda_launch_lock;
   /*! \brief The cusparse handler */
   cusparseHandle_t cusparse_handle{nullptr};
   /*! \brief The cublas handler */

@@ -9,6 +9,7 @@
 #include "coordinator.h"
 #include "./comm/comm_info.h"
 #include <atomic>
+#include <vector>
 
 using namespace dgl::runtime;
 
@@ -19,13 +20,10 @@ struct DSContext {
   bool initialized = false;
   int world_size;
   int rank;
-  std::unique_ptr<ncclComm_t[]> sample_nccl_comm;
-  std::unique_ptr<ncclComm_t[]> load_nccl_comm;
-  int sample_worker_num;
-  int load_worker_num;
+  int thread_num;
+  std::vector<ncclComm_t> nccl_comm;
+  std::vector<std::unique_ptr<CommInfo> > comm_info;
   std::unique_ptr<Coordinator> coordinator;
-  CommInfo comm_info;
-  CommInfo comm_info_load;
   std::unique_ptr<Coordinator> comm_coordinator;
 
   static DSContext* Global() {

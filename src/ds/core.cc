@@ -30,7 +30,7 @@ ncclUniqueId StringToNCCLId(const std::string& str) {
   return ret;
 }
 
-void SetupGpuCommunicationEnv() {
+void SetupGpuCommunicationEnv(CommInfo *comm_info) {
   auto* ds_context = DSContext::Global();
   int rank = ds_context->rank;
   int world_size = ds_context->world_size;
@@ -40,12 +40,7 @@ void SetupGpuCommunicationEnv() {
   for(int r = 0; r < world_size; ++r) {
     conns.push_back(Connection::GetConnection(coor->GetPeerInfos()[rank], coor->GetPeerInfos()[r]));
   }
-  BuildCommInfo(n_block, conns, coor, &ds_context->comm_info);
-  std::vector<std::shared_ptr<Connection>> conns_load;
-  for(int r = 0; r < world_size; ++r) {
-    conns_load.push_back(Connection::GetConnection(coor->GetPeerInfos()[rank], coor->GetPeerInfos()[r]));
-  }
-  BuildCommInfo(n_block, conns_load, coor, &ds_context->comm_info_load);
+  BuildCommInfo(n_block, conns, coor, comm_info);
 }
 
 void InitNcclComm(ncclComm_t *nccl_comm, DSContext *ds_context, int world_size, int rank) {
@@ -59,7 +54,7 @@ void InitNcclComm(ncclComm_t *nccl_comm, DSContext *ds_context, int world_size, 
   ncclCommInitRank(nccl_comm, world_size, nccl_id, rank);
 }
 
-void Initialize(int rank, int world_size, int sample_worker_num, int subtensor_load_num) {
+void Initialize(int rank, int world_size, int thread_num) {
   LOG(INFO) << "Rank [" << rank << "] initializing DS context";
   auto* ds_context = DSContext::Global();
   ds_context->initialized = true;
@@ -71,24 +66,23 @@ void Initialize(int rank, int world_size, int sample_worker_num, int subtensor_l
   ds_context->comm_coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size, comm_port));
   cudaSetDevice(rank);
 
-  // int use_nccl = GetEnvParam("USE_NCCL", 0);
-  // wrapNvmlInit();
-  // Build our communication environment
-  // SetupGpuCommunicationEnv();
-  // Build NCCL environment
-  
-  // init nccl communicators for sample workers
-  ds_context->sample_worker_num = sample_worker_num;
-  ds_context->sample_nccl_comm = std::unique_ptr<ncclComm_t[]>(new ncclComm_t[sample_worker_num]);
-  for (int i=0; i<sample_worker_num; i++) {
-    InitNcclComm(&(ds_context->sample_nccl_comm[i]), ds_context, world_size, rank);
-  }
+  ds_context->thread_num = thread_num;
 
-  // init nccl communicators for load workers
-  ds_context->load_worker_num = subtensor_load_num;
-  ds_context->load_nccl_comm = std::unique_ptr<ncclComm_t[]>(new ncclComm_t[subtensor_load_num]);
-  for (int i=0; i<subtensor_load_num; i++) {
-    InitNcclComm(&(ds_context->load_nccl_comm[i]), ds_context, world_size, rank);
+  int use_nccl = GetEnvParam("USE_NCCL", 0);
+  if (!use_nccl) {
+    // Build our communication environment
+    ds_context->comm_info.resize(thread_num);
+    wrapNvmlInit();
+    for (int i=0; i<thread_num; i++) {
+      ds_context->comm_info[i] = std::unique_ptr<CommInfo>(new CommInfo());
+      SetupGpuCommunicationEnv(ds_context->comm_info[i].get());
+    }
+  } else {
+    // Build NCCL environment
+    ds_context->nccl_comm.resize(thread_num);
+    for (int i=0; i<thread_num; i++) {
+      InitNcclComm(&(ds_context->nccl_comm[i]), ds_context, world_size, rank);
+    }
   }
 
   //init scheduler
@@ -104,9 +98,8 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   int rank = args[0];
   int world_size = args[1];
-  int sample_worker_num = args[2];
-  int subtensor_load_num = args[3];
-  Initialize(rank, world_size, sample_worker_num, subtensor_load_num);
+  int thread_num = args[2];
+  Initialize(rank, world_size, thread_num);
 });
 
 // Set dgl thread local stream
@@ -122,6 +115,10 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetStream")
   
   // Create data copy stream to pipeline with kernels
   CUDACHECK(cudaStreamCreate(&thr_entry->data_copy_stream));
+
+  CUDACHECK(cudaHostRegister((void*)&(thr_entry->cuda_launch_lock), sizeof(int), cudaHostRegisterMapped));
+  thr_entry->cuda_launch_lock = 0;
+  CUDACHECK(cudaDeviceSynchronize());
 });
 
 }

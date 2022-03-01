@@ -45,20 +45,19 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   CUDACHECK(cudaSetDevice(rank));
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   cudaStream_t s = thr_entry->stream;
-  int thread_id = thr_entry->thread_id;
 
   IdArray send_sizes, send_offset;
   Cluster(rank, input_nodes, min_vids, world_size, &send_sizes, &send_offset);
 
   IdArray frontier, recv_offset;
-  std::tie(frontier, recv_offset) = Alltoall(input_nodes, send_offset, 1, rank, world_size, context->load_nccl_comm[thread_id], false);
+  std::tie(frontier, recv_offset) = Alltoall(input_nodes, send_offset, 1, rank, world_size);
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray features_to_send;
   LoadFeature(frontier, features, &features_to_send);
 
   IdArray features_recv, feature_recv_offset;
-  std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, features->shape[1], rank, world_size, context->load_nccl_comm[thread_id], false);
+  std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, features->shape[1], rank, world_size);
 
   *rv = features_recv;
 });

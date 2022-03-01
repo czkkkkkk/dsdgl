@@ -196,9 +196,9 @@ def run(rank, args, train_label):
     th.set_num_interop_threads(1)
     print('num threads: {}, iterop threads: {}'.format(th.get_num_threads(), th.get_num_interop_threads()))
     setup(rank, args.n_ranks)
-    sampler_number = 2
-    loader_number = 1
-    ds.init(rank, args.n_ranks, sample_worker_num=sampler_number, load_worker_num=loader_number)
+    sampler_number = 3
+    loader_number = 3
+    ds.init(rank, args.n_ranks, thread_num=sampler_number + loader_number)
     
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
@@ -282,7 +282,8 @@ def run(rank, args, train_label):
       else:
         cur_batches = total_batches // sampler_number
       acc_batches += cur_batches
-      sample_workers.append(Sampler(my_dataloader, sample_data_buffer, rank, args.num_epochs, i, sampler_number, cur_batches))
+      thread_id = i
+      sample_workers.append(Sampler(my_dataloader, sample_data_buffer, rank, args.num_epochs, thread_id, sampler_number, cur_batches))
       sample_workers[i].start()
 
     load_workers = []
@@ -293,7 +294,8 @@ def run(rank, args, train_label):
       else:
         cur_batches = total_batches // loader_number
       acc_batches += cur_batches
-      load_workers.append(SubtensorLoader(train_feature, train_label, min_vids, sample_data_buffer, subtensor_data_buffer, rank, args.num_epochs, i, loader_number, cur_batches))
+      thread_id = i + sampler_number
+      load_workers.append(SubtensorLoader(train_feature, train_label, min_vids, sample_data_buffer, subtensor_data_buffer, rank, args.num_epochs, thread_id, loader_number, cur_batches))
       load_workers[i].start()
   
     train_time = 0
