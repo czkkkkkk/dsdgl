@@ -178,6 +178,9 @@ TEST(DSSampling, Alltoall32bits) {
 template<typename T>
 void _AlltoallBenchmark(int rank, int world_size, int size, int expand_size=1) {
   auto stream = CUDAThreadEntry::ThreadLocal()->stream;
+  CUDAThreadEntry::ThreadLocal()->thread_id=0;
+  cudaHostRegister((void*)&(CUDAThreadEntry::ThreadLocal()->cuda_launch_lock), sizeof(int), cudaHostRegisterMapped);
+  cudaDeviceSynchronize();
   std::vector<int64_t> send_offset(world_size + 1, 0);
   for(int i = 1; i <= world_size; ++i) {
     send_offset[i] = i * size;
