@@ -4,7 +4,7 @@
 namespace dgl {
 namespace ds {
 
-void Initialize(int rank, int world_size);
+void Initialize(int rank, int world_size, int thread_num=2);
 
 }
 }
