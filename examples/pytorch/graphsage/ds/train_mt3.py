@@ -25,7 +25,7 @@ from queue import Queue
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12379'
+    os.environ['MASTER_PORT'] = '12377'
 
     # initialize the process group
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
@@ -108,6 +108,7 @@ class PCQueue(object):
 class Sampler(Thread):
   finish_sampler_ = 0
   lock_ = threading.Lock()
+  sem_ = threading.Semaphore(0)
 
   def __init__(self, dataloader, pc_queue, rank, num_epochs, thread_id, sampler_number, batches):
     Thread.__init__(self)
@@ -126,8 +127,6 @@ class Sampler(Thread):
     dgl.ds.set_thread_local_stream(s, self.thread_id)
     with th.cuda.stream(s):
       for i in range(self.num_epochs):
-        while self.dataloader.current_epoch() < i:
-          pass
         for j in range(self.batches):
           batch = self.dataloader.next()
           s.synchronize()
@@ -138,12 +137,15 @@ class Sampler(Thread):
         if Sampler.finish_sampler_ == self.sampler_number:
           Sampler.finish_sampler_ = 0
           self.dataloader.next_epoch()
+          for i in range(self.sampler_number):
+            Sampler.sem_.release()
         Sampler.lock_.release()
+        Sampler.sem_.acquire()
 
 class SubtensorLoader(Thread):
   finish_loader_ = 0
   lock_ = threading.Lock()
-  epoch_ = 0
+  sem_ = threading.Semaphore(0)
 
   def __init__(self, features, labels, min_vids, in_pc_queue, out_pc_queue, rank, num_epochs, thread_id, loader_number, batches):
     Thread.__init__(self)
@@ -165,8 +167,6 @@ class SubtensorLoader(Thread):
     dgl.ds.set_thread_local_stream(s, self.thread_id)
     with th.cuda.stream(s):
       for i in range(self.num_epochs):
-        while SubtensorLoader.epoch_ < i:
-          pass
         for j in range(self.batches):
           sample_result = self.in_pc_queue.get()
           input_nodes = sample_result[0]
@@ -180,8 +180,10 @@ class SubtensorLoader(Thread):
         if SubtensorLoader.finish_loader_ == self.loader_number:
           SubtensorLoader.finish_loader_ = 0
           self.out_pc_queue.stop_produce(1)
-          SubtensorLoader.epoch_ += 1
+          for i in range(self.loader_number):
+            SubtensorLoader.sem_.release()
         SubtensorLoader.lock_.release()
+        SubtensorLoader.sem_.acquire()
 
 def show_thread():
   t = threading.currentThread()
@@ -261,8 +263,8 @@ def run(rank, args, train_label):
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
-    skip_epoch = 5
-    sample_data_buffer = PCQueue(10)
+    skip_epoch = 6
+    sample_data_buffer = PCQueue(20)
     subtensor_data_buffer = PCQueue(10)
 
     s = th.cuda.Stream(device=device)
@@ -338,8 +340,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='GCN')
     register_data_args(parser)
     parser.add_argument('--graph_name', default='test', type=str, help='graph name')
-    parser.add_argument('--part_config', default='./reddit-data-2/reddit.json', type=str, help='The path to the partition config file')
-    parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
+    parser.add_argument('--part_config', default='./reddit-data-1/reddit.json', type=str, help='The path to the partition config file')
+    parser.add_argument('--n_ranks', default=1, type=int, help='Number of ranks')
     parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
     parser.add_argument('--num_hidden', default=16, type=int, help='Hidden size')
     parser.add_argument('--dropout', type=float, default=0.5)
