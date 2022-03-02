@@ -93,6 +93,7 @@ class PCQueue(object):
   def get(self):
     self.product.acquire()
     item = self.buffer.get()
+    self.buffer.task_done()
     self.capacity.release()
     return item
   
@@ -197,8 +198,8 @@ def run(rank, args, train_label):
     th.set_num_interop_threads(1)
     print('num threads: {}, iterop threads: {}'.format(th.get_num_threads(), th.get_num_interop_threads()))
     setup(rank, args.n_ranks)
-    sampler_number = 3
-    loader_number = 3
+    sampler_number = 4
+    loader_number = 4
     ds.init(rank, args.n_ranks, thread_num=sampler_number + loader_number)
     
     # load partitioned graph
@@ -264,7 +265,7 @@ def run(rank, args, train_label):
     stop_epoch = -1
     total = 0
     skip_epoch = 6
-    sample_data_buffer = PCQueue(20)
+    sample_data_buffer = PCQueue(10)
     subtensor_data_buffer = PCQueue(10)
 
     s = th.cuda.Stream(device=device)
@@ -340,8 +341,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='GCN')
     register_data_args(parser)
     parser.add_argument('--graph_name', default='test', type=str, help='graph name')
-    parser.add_argument('--part_config', default='./reddit-data-1/reddit.json', type=str, help='The path to the partition config file')
-    parser.add_argument('--n_ranks', default=1, type=int, help='Number of ranks')
+    parser.add_argument('--part_config', default='./reddit-data-2/reddit.json', type=str, help='The path to the partition config file')
+    parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
     parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
     parser.add_argument('--num_hidden', default=16, type=int, help='Hidden size')
     parser.add_argument('--dropout', type=float, default=0.5)
