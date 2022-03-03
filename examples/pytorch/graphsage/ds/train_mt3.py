@@ -22,6 +22,7 @@ from model import SAGE
 import threading
 from threading import Thread
 from queue import Queue
+from pc_queue import *
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -71,60 +72,36 @@ class ParallelNodeDataLoader(object):
   def __init__(self, dataloader):
     self.dataloader = dataloader
     self.iterator = dataloader.__iter__()
-    self.lock = threading.Lock()
-    self.epoch = 0
   
   def next_epoch(self):
     self.iterator = self.dataloader.__iter__()
-    self.epoch += 1
-
-  def current_epoch(self):
-    return self.epoch
 
   def next(self):
     return next(self.iterator)
-
-class PCQueue(object):
-  def __init__(self, capacity):
-    self.capacity = threading.Semaphore(capacity)
-    self.product = threading.Semaphore(0)
-    self.buffer = Queue()
-  
-  def get(self):
-    self.product.acquire()
-    item = self.buffer.get()
-    self.buffer.task_done()
-    self.capacity.release()
-    return item
-  
-  def put(self, item):
-    self.capacity.acquire()
-    self.buffer.put(item)
-    self.product.release()
-  
-  def stop_produce(self, num):
-    for i in range(num):
-      self.put(None)
 
 class Sampler(Thread):
   finish_sampler_ = 0
   lock_ = threading.Lock()
   sem_ = threading.Semaphore(0)
 
-  def __init__(self, dataloader, pc_queue, rank, num_epochs, thread_id, sampler_number, batches):
+  def __init__(self, dataloader, mpmc_queue, rank, num_epochs, thread_id, sampler_number, batches_per_sampler):
     Thread.__init__(self)
     self.rank = rank
     self.dataloader = dataloader
-    self.pc_queue = pc_queue
+    self.mpmc_queue = mpmc_queue
     self.num_epochs = num_epochs
     self.thread_id = thread_id
     self.sampler_number = sampler_number
-    self.batches = batches
+    self.batches_per_sampler = batches_per_sampler
+    self.batches = batches_per_sampler[thread_id]
+    self.total_batches = sum(batches_per_sampler)
   
+  def next_epoch(self):
+    self.thread_id = (self.thread_id + self.total_batches) % self.sampler_number
+
   def run(self):
     th.cuda.set_device(self.rank)
     s = th.cuda.Stream(device=self.rank)
-    print('cuda stream', s)
     dgl.ds.set_thread_local_stream(s, self.thread_id)
     with th.cuda.stream(s):
       for i in range(self.num_epochs):
@@ -132,7 +109,9 @@ class Sampler(Thread):
           batch = self.dataloader.next()
           s.synchronize()
           (input_nodes, seeds, blocks) = batch
-          self.pc_queue.put((input_nodes, seeds, blocks))
+          print("rank", self.rank, "sampler", self.thread_id, "wait to put data")
+          self.mpmc_queue.put((input_nodes, seeds, blocks), self.thread_id)
+          print("rank", self.rank, "sampler", self.thread_id, "finish put data")
         Sampler.lock_.acquire()
         Sampler.finish_sampler_ += 1
         if Sampler.finish_sampler_ == self.sampler_number:
@@ -142,40 +121,48 @@ class Sampler(Thread):
             Sampler.sem_.release()
         Sampler.lock_.release()
         Sampler.sem_.acquire()
+        #self.next_epoch()
 
 class SubtensorLoader(Thread):
   finish_loader_ = 0
   lock_ = threading.Lock()
   sem_ = threading.Semaphore(0)
 
-  def __init__(self, features, labels, min_vids, in_pc_queue, out_pc_queue, rank, num_epochs, thread_id, loader_number, batches):
+  def __init__(self, features, labels, min_vids, in_mpmc_queue, out_pc_queue, rank, num_epochs, thread_id, sampler_number, loader_number, batches_per_loader):
     Thread.__init__(self)
     self.rank = rank
     self.features = features
     self.labels = labels
     self.min_vids = min_vids
-    self.in_pc_queue = in_pc_queue
+    self.in_mpmc_queue = in_mpmc_queue
     self.out_pc_queue = out_pc_queue
     self.num_epochs = num_epochs
     self.thread_id = thread_id
+    self.sampler_number = sampler_number
     self.loader_number = loader_number
-    self.batches = batches
+    self.batches_per_loader = batches_per_loader
+    self.batches = batches_per_loader[thread_id]
+    self.total_batches = sum(batches_per_loader)
   
+  def next_epoch(self):
+    self.thread_id = (self.thread_id + self.total_batches) % self.loader_number
+
   def run(self):
     th.cuda.set_device(self.rank)
     s = th.cuda.Stream(device=self.rank)
-    print('cuda stream', s)
-    dgl.ds.set_thread_local_stream(s, self.thread_id)
+    dgl.ds.set_thread_local_stream(s, self.thread_id + self.sampler_number)
     with th.cuda.stream(s):
       for i in range(self.num_epochs):
-        for j in range(self.batches):
-          sample_result = self.in_pc_queue.get()
+        for i in range(self.batches):
+          sample_result = self.in_mpmc_queue.get(self.thread_id)
           input_nodes = sample_result[0]
           seeds = sample_result[1]
           blocks = sample_result[2]
           batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
           s.synchronize()
+          print("rank", self.rank, "loader", self.thread_id + self.sampler_number, "wait to put data")
           self.out_pc_queue.put((batch_inputs, batch_labels, blocks))
+          print("rank", self.rank, "loader", self.thread_id + self.sampler_number, "finish put data")
         SubtensorLoader.lock_.acquire()
         SubtensorLoader.finish_loader_ += 1
         if SubtensorLoader.finish_loader_ == self.loader_number:
@@ -185,36 +172,28 @@ class SubtensorLoader(Thread):
             SubtensorLoader.sem_.release()
         SubtensorLoader.lock_.release()
         SubtensorLoader.sem_.acquire()
-
-def show_thread():
-  t = threading.currentThread()
-  print('python thread id: {}, thread name: {}'.format(t.ident, t.getName()))
+        #self.next_epoch()
     
 def run(rank, args, train_label):
-    print('num threads: {}, iterop threads: {}'.format(th.get_num_threads(), th.get_num_interop_threads()))
     print('Start rank', rank, 'with args:', args)
     th.cuda.set_device(rank)
     th.set_num_threads(1)
     th.set_num_interop_threads(1)
     print('num threads: {}, iterop threads: {}'.format(th.get_num_threads(), th.get_num_interop_threads()))
     setup(rank, args.n_ranks)
-    sampler_number = 4
-    loader_number = 4
+    sampler_number = 2
+    loader_number = 2
     ds.init(rank, args.n_ranks, thread_num=sampler_number + loader_number)
     
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
-
     g = dgl.add_self_loop(g)
-
     num_vertices = gpb._max_node_ids[-1]
-   
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
     print('rank {}, # global: {}, # local: {}'.format(rank, num_vertices, n_local_nodes))
     print('# in feats:', node_feats['_N/features'].shape[1])
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
     train_nid = dgl.ds.rebalance_train_nids(train_nid, args.batch_size, g.ndata[dgl.NID])
-
     n_classes = len(th.unique(train_label[th.logical_not(th.isnan(train_label))]))
     print('#labels:', n_classes)
 
@@ -264,50 +243,40 @@ def run(rank, args, train_label):
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
-    skip_epoch = 6
-    sample_data_buffer = PCQueue(10)
+    skip_epoch = 5
+    #sample_data_buffer = MPMCQueue(10, sampler_number, loader_number)
+    sample_data_buffer = MPMCQueue_simple(10, sampler_number, loader_number)
     subtensor_data_buffer = PCQueue(10)
-
-    s = th.cuda.Stream(device=device)
-    print('cuda stream', s)
-    dgl.ds.set_device_thread_local_stream(device, s)
-
     my_dataloader = ParallelNodeDataLoader(dataloader)
-    total_batches = dataloader.__len__()
-    print("rank", rank, "batch number", total_batches)
 
+    total_batches = dataloader.__len__()
+    batch_per_sampler = divide(total_batches, sampler_number)
+    print("batch per sampler", batch_per_sampler)
     sample_workers = []
-    acc_batches = 0
     for i in range(sampler_number):
-      if i == sampler_number - 1:
-        cur_batches = total_batches - acc_batches
-      else:
-        cur_batches = total_batches // sampler_number
-      print("rank", rank, "sampler", i, "batches", cur_batches)
-      acc_batches += cur_batches
       thread_id = i
-      sample_workers.append(Sampler(my_dataloader, sample_data_buffer, rank, args.num_epochs, thread_id, sampler_number, cur_batches))
+      sample_workers.append(Sampler(my_dataloader, sample_data_buffer, rank, args.num_epochs, thread_id, sampler_number, batch_per_sampler))
       sample_workers[i].start()
 
+    batch_per_loader = divide(total_batches, loader_number)
+    print("batch per loader", batch_per_loader)
     load_workers = []
-    acc_batches = 0
     for i in range(loader_number):
-      if i == loader_number - 1:
-        cur_batches = total_batches - acc_batches
-      else:
-        cur_batches = total_batches // loader_number
-      print("rank", rank, "loader", i, "batches", cur_batches)
-      acc_batches += cur_batches
-      thread_id = i + sampler_number
-      load_workers.append(SubtensorLoader(train_feature, train_label, min_vids, sample_data_buffer, subtensor_data_buffer, rank, args.num_epochs, thread_id, loader_number, cur_batches))
+      thread_id = i
+      load_workers.append(SubtensorLoader(train_feature, train_label, min_vids, sample_data_buffer, subtensor_data_buffer, rank, args.num_epochs, thread_id, sampler_number, loader_number, batch_per_loader))
       load_workers[i].start()
   
+    s = th.cuda.Stream(device=device)
+    dgl.ds.set_device_thread_local_stream(device, s)
+
     train_time = 0
     for epoch in range(args.num_epochs):
         tic = time.time()
         step = 0
         while True:
+          print("rank", rank, "wait for train data")
           batch_data = subtensor_data_buffer.get()
+          print("rank", rank, "get train data")
           if batch_data is None:
             break
           begin = time.time()
@@ -341,8 +310,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='GCN')
     register_data_args(parser)
     parser.add_argument('--graph_name', default='test', type=str, help='graph name')
-    parser.add_argument('--part_config', default='./reddit-data-2/reddit.json', type=str, help='The path to the partition config file')
-    parser.add_argument('--n_ranks', default=2, type=int, help='Number of ranks')
+    parser.add_argument('--part_config', default='./reddit-data-4/reddit.json', type=str, help='The path to the partition config file')
+    parser.add_argument('--n_ranks', default=4, type=int, help='Number of ranks')
     parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
     parser.add_argument('--num_hidden', default=16, type=int, help='Hidden size')
     parser.add_argument('--dropout', type=float, default=0.5)
