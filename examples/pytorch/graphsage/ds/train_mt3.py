@@ -181,8 +181,8 @@ def run(rank, args, train_label):
     th.set_num_interop_threads(1)
     print('num threads: {}, iterop threads: {}'.format(th.get_num_threads(), th.get_num_interop_threads()))
     setup(rank, args.n_ranks)
-    sampler_number = 2
-    loader_number = 2
+    sampler_number = 3
+    loader_number = 3
     ds.init(rank, args.n_ranks, thread_num=sampler_number + loader_number)
     
     # load partitioned graph
@@ -234,6 +234,9 @@ def run(rank, args, train_label):
         drop_last=False,
         num_workers=0)
 
+    s = th.cuda.Stream(device=device)
+    dgl.ds.set_device_thread_local_stream(device, s)
+
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes, len(fanout), th.relu, args.dropout)
     model = model.to(device)
@@ -265,16 +268,12 @@ def run(rank, args, train_label):
       thread_id = i
       load_workers.append(SubtensorLoader(train_feature, train_label, min_vids, sample_data_buffer, subtensor_data_buffer, rank, args.num_epochs, thread_id, sampler_number, loader_number, batch_per_loader))
       load_workers[i].start()
-  
-    s = th.cuda.Stream(device=device)
-    dgl.ds.set_device_thread_local_stream(device, s)
 
     train_time = 0
     for epoch in range(args.num_epochs):
         tic = time.time()
         step = 0
         while True:
-          print("rank", rank, "wait for train data")
           batch_data = subtensor_data_buffer.get()
           print("rank", rank, "get train data")
           if batch_data is None:
@@ -285,11 +284,20 @@ def run(rank, args, train_label):
             batch_labels = batch_data[1]
             blocks = batch_data[2]
             batch_pred = model(blocks, batch_inputs)
+            s.synchronize()
+            print("rank", rank, "finish model")
             loss = loss_fcn(batch_pred, batch_labels)
+            s.synchronize()
+            print("rank", rank, "finish loss_fcn")
             optimizer.zero_grad()
+            s.synchronize()
+            print("rank", rank, "finish zero_grad")
             loss.backward()
+            s.synchronize()
+            print("rank", rank, "finish backward")
             optimizer.step()
             s.synchronize()
+            print("rank", rank, "finish step")
             th.distributed.barrier()
           step += time.time() - begin
 
