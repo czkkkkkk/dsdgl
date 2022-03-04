@@ -23,6 +23,7 @@ import threading
 from threading import Thread
 from queue import Queue
 from pc_queue import *
+from torch.nn.parallel import DistributedDataParallel
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -121,7 +122,7 @@ class Sampler(Thread):
             Sampler.sem_.release()
         Sampler.lock_.release()
         Sampler.sem_.acquire()
-        #self.next_epoch()
+        self.next_epoch()
 
 class SubtensorLoader(Thread):
   finish_loader_ = 0
@@ -161,18 +162,17 @@ class SubtensorLoader(Thread):
           batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
           s.synchronize()
           print("rank", self.rank, "loader", self.thread_id + self.sampler_number, "wait to put data")
-          self.out_pc_queue.put((batch_inputs, batch_labels, blocks))
+          self.out_pc_queue.put((batch_inputs, batch_labels, blocks), self.thread_id)
           print("rank", self.rank, "loader", self.thread_id + self.sampler_number, "finish put data")
         SubtensorLoader.lock_.acquire()
         SubtensorLoader.finish_loader_ += 1
         if SubtensorLoader.finish_loader_ == self.loader_number:
           SubtensorLoader.finish_loader_ = 0
-          self.out_pc_queue.stop_produce(1)
           for i in range(self.loader_number):
             SubtensorLoader.sem_.release()
         SubtensorLoader.lock_.release()
         SubtensorLoader.sem_.acquire()
-        #self.next_epoch()
+        self.next_epoch()
     
 def run(rank, args, train_label):
     print('Start rank', rank, 'with args:', args)
@@ -240,6 +240,8 @@ def run(rank, args, train_label):
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes, len(fanout), th.relu, args.dropout)
     model = model.to(device)
+    if args.n_ranks > 1:
+      model = DistributedDataParallel(model, device_ids=[rank], output_device=rank)
     loss_fcn = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     
@@ -247,9 +249,10 @@ def run(rank, args, train_label):
     stop_epoch = -1
     total = 0
     skip_epoch = 5
-    #sample_data_buffer = MPMCQueue(10, sampler_number, loader_number)
-    sample_data_buffer = MPMCQueue_simple(10, sampler_number, loader_number)
-    subtensor_data_buffer = PCQueue(10)
+    sample_data_buffer = MPMCQueue(10, sampler_number, loader_number)
+    # sample_data_buffer = MPMCQueue_simple(10, sampler_number, loader_number)
+    subtensor_data_buffer = MPMCQueue(10, loader_number, 1)
+    # subtensor_data_buffer = PCQueue(10)
     my_dataloader = ParallelNodeDataLoader(dataloader)
 
     total_batches = dataloader.__len__()
@@ -273,31 +276,21 @@ def run(rank, args, train_label):
     for epoch in range(args.num_epochs):
         tic = time.time()
         step = 0
-        while True:
-          batch_data = subtensor_data_buffer.get()
+        for i in range(total_batches):
+          batch_data = subtensor_data_buffer.get(0)
           print("rank", rank, "get train data")
-          if batch_data is None:
-            break
+          subtensor_data_buffer.size()
           begin = time.time()
           with th.cuda.stream(s):
             batch_inputs = batch_data[0]
             batch_labels = batch_data[1]
             blocks = batch_data[2]
             batch_pred = model(blocks, batch_inputs)
-            s.synchronize()
-            print("rank", rank, "finish model")
             loss = loss_fcn(batch_pred, batch_labels)
-            s.synchronize()
-            print("rank", rank, "finish loss_fcn")
             optimizer.zero_grad()
-            s.synchronize()
-            print("rank", rank, "finish zero_grad")
             loss.backward()
-            s.synchronize()
-            print("rank", rank, "finish backward")
             optimizer.step()
             s.synchronize()
-            print("rank", rank, "finish step")
             th.distributed.barrier()
           step += time.time() - begin
 

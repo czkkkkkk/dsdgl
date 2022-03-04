@@ -10,7 +10,9 @@ class PCQueue(object):
   def get(self):
     self.product.acquire()
     item = self.buffer.get()
+    self.buffer.task_done()
     self.capacity.release()
+    print("training data remain:", self.buffer.qsize())
     return item
   
   def put(self, item):
@@ -101,3 +103,6 @@ class MPMCQueue(object):
     seq = self.get_p_seq()
     self.capacity_per_producer[seq % self.p_number].release()
     return item
+  
+  def size(self):
+    print("training data remain:", self.buffer.qsize())
