@@ -391,7 +391,7 @@ void _FeatTypePartKernel(int n_nodes, IdType* nodes,
     atomicAdd((unsigned long long*)(local_count + feat_type), 1);
     part_ids[idx] = feat_type;
     if(feat_type == FEAT_ON_HOST) {
-      part_pos[idx] = -feat_pos_map[nid] - 2;
+      part_pos[idx] = ENCODE_SHARED_ID(feat_pos_map[nid]);
     } else {
       part_pos[idx] = nid; 
     }

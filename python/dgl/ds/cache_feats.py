@@ -7,18 +7,15 @@ __all__ = [
     'cache_feats',
     ]
 
-def cache_feats(graph, feats, ratio, rank):
+def cache_feats(feat_mode, graph, feats, ratio):
+    '''
+    Return the device features, cached features and feat_pos_map if cache_ratio is smaller than 100
+    '''
     assert ratio >= 0 and ratio <= 100
-    if ratio == 100:
-        feats = feats.to(rank)
-        return feats, None, None
+    # feat_mode = feat_mode.encode('utf-8')
     feats = F.to_dgl_nd(feats)
     global_ids = F.to_dgl_nd(graph.ndata[dgl.NID])
     degs = F.to_dgl_nd(graph.in_degrees())
-    ret = _CAPI_DGLDSCacheFeats(feats, global_ids, degs, ratio)
-    dev_feats = F.from_dgl_nd(ret(0)).reshape(-1, feats.shape[-1])
-    shared_feats = F.from_dgl_nd(ret(1)).reshape(-1, feats.shape[-1])
-    feat_pos_map = F.from_dgl_nd(ret(2))
-    return dev_feats, shared_feats, feat_pos_map
+    _CAPI_DGLDSCacheFeats(feat_mode, feats, global_ids, degs, ratio)
 
 _init_api("dgl.ds.cache_feats")

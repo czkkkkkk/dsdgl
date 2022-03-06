@@ -4,6 +4,7 @@
 #include <nccl.h>
 #include <dgl/packed_func_ext.h>
 #include <dgl/runtime/registry.h>
+#include <dgl/array.h>
 #include <memory>
 
 #include "coordinator.h"
@@ -16,6 +17,10 @@ using namespace dgl::runtime;
 namespace dgl {
 namespace ds {
 
+enum FeatMode { kFeatModeAllCache, kFeatModePartitionCache, kFeatModeReplicateCache };
+
+#define ENCODE_SHARED_ID(i) (-(i)-2)
+
 struct DSContext {
   bool initialized = false;
   int world_size;
@@ -25,6 +30,12 @@ struct DSContext {
   std::vector<std::unique_ptr<CommInfo> > comm_info;
   std::unique_ptr<Coordinator> coordinator;
   std::unique_ptr<Coordinator> comm_coordinator;
+
+  // Feature related arrays
+  bool feat_loaded = false;
+  FeatMode feat_mode;
+  IdArray dev_feats, shared_feats, feat_pos_map;
+  int feat_dim;
 
   static DSContext* Global() {
     static DSContext instance;
