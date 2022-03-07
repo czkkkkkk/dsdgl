@@ -197,6 +197,9 @@ __global__
 void _AlltoallKernel(AlltoallArgs args) {
   int bid = blockIdx.x;
   int tid = threadIdx.x;
+  if (tid == 0) {
+    atomicAdd(args.cuda_launch_lock, -1);
+  }
   int world_size = args.world_size;
   int rank = args.rank;
   int peer_id = tid / args.n_threads_per_conn;
@@ -276,7 +279,7 @@ IdArray Diff(IdArray prefix_sum) {
   }                                                             \
 } while (0)
 
-void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_t* recv_offset, int n_bytes, int align_size, CommInfo* comm_info, int rank, int world_size) {
+void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_t* recv_offset, int n_bytes, int align_size, CommInfo* comm_info, int rank, int world_size, int *cuda_launch_lock) {
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   AlltoallArgs args;
   args.rank = rank;
@@ -291,6 +294,8 @@ void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_
   args.send_offset = send_offset;
   args.recvbuff = recvbuff;
   args.recv_offset = recv_offset;
+  *cuda_launch_lock = comm_info->n_block;
+  args.cuda_launch_lock = cuda_launch_lock;
   dim3 grid_dim(comm_info->n_block);
   dim3 block_dim(n_threads);
   void *kargs[] = {&args};
@@ -303,7 +308,7 @@ void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_
 
 }
 
-IdArray ExchangeSendSizes(IdArray send_offset, CommInfo* comm_info, int rank, int world_size) {
+IdArray ExchangeSendSizes(IdArray send_offset, CommInfo* comm_info, int rank, int world_size, int *cuda_launch_lock) {
   auto stream = CUDAThreadEntry::ThreadLocal()->stream;
   auto send_sizes = Diff(send_offset);
   IdArray recv_sizes = IdArray::Empty({world_size}, send_offset->dtype, send_offset->ctx);
@@ -321,6 +326,8 @@ IdArray ExchangeSendSizes(IdArray send_offset, CommInfo* comm_info, int rank, in
   args.recv_offset = nullptr;
   dim3 grid_dim(1);
   dim3 block_dim(n_threads);
+  *cuda_launch_lock = 1;
+  args.cuda_launch_lock = cuda_launch_lock;
   void *kargs[] = {&args};
   ALLTOALL_SWITCH_ALIGN_SIZE(sizeof(IdType), AlignType, {
     ALLTOALL_SWITCH_GROUP_SIZE(args.n_threads_per_conn, GroupSize, {
@@ -335,14 +342,16 @@ IdArray ExchangeSendSizes(IdArray send_offset, CommInfo* comm_info, int rank, in
 template <typename T, ncclDataType_t NCCL_DATA_TYPE>
 void NCCLAllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer, IdArray recv_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm) {
   auto stream = CUDAThreadEntry::ThreadLocal()->stream;
+  auto data_copy_stream = CUDAThreadEntry::ThreadLocal()->data_copy_stream;
   T* send_buffer_ptr = send_buffer.Ptr<T>();
   T* recv_buffer_ptr = recv_buffer.Ptr<T>();
   int type_bytes = sizeof(T);
   IdType* send_offset_ptr = send_offset.Ptr<IdType>();
   IdType* recv_offset_ptr = recv_offset.Ptr<IdType>();
+  CUDACHECK(cudaStreamSynchronize(stream));
   CUDACHECK(cudaMemcpyAsync(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
                        send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
-                       (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice, stream));
+                       (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice, data_copy_stream));
   ncclGroupStart();
   for(int r = 0; r < world_size; ++r) {
     if(r != rank) {
@@ -357,39 +366,42 @@ void NCCLAllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer,
   ncclGroupEnd();
 }
 
-std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size, ncclComm_t nccl_comm, bool is_sample) {
-  CommToken comm_token = is_sample ? COMM_SAMPLE : COMM_LOAD;
+std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size) {
   auto* scheduler = Scheduler::Global();
   if(!GetEnvParam("USE_NCCL", 1)) {
     auto stream = CUDAThreadEntry::ThreadLocal()->stream;
     auto data_copy_stream = CUDAThreadEntry::ThreadLocal()->data_copy_stream;
-    auto* ds_context = DSContext::Global();
+    auto *ds_context = DSContext::Global();
     auto dgl_context = input->ctx;
     int type_bytes = input->dtype.bits / 8;
+    volatile int *cuda_launch_lock = &(CUDAThreadEntry::ThreadLocal()->cuda_launch_lock);
+    int thread_id = CUDAThreadEntry::ThreadLocal()->thread_id;
 
     // NOTE: to guarantee the send_offset is ready
     CUDACHECK(cudaStreamSynchronize(stream));
     auto host_send_offset = send_offset.CopyTo({kDLCPU, 0}, data_copy_stream);
 
-    CommInfo *comm_info;
-    if (is_sample) {
-      comm_info = &ds_context->comm_info;
-    } else {
-      comm_info = &ds_context->comm_info_load;
-    }
-    scheduler->TryComm(comm_token);
-    auto recv_offset = ExchangeSendSizes(send_offset, comm_info, rank, world_size);
+    CommInfo *comm_info = ds_context->comm_info[thread_id].get();
+    scheduler->TryComm(thread_id);
+    auto recv_offset = ExchangeSendSizes(send_offset, comm_info, rank, world_size, (int *)cuda_launch_lock);
+    // while (*cuda_launch_lock > 0);
+    // CUDACHECK(cudaStreamSynchronize(stream));
+    // CHECK_EQ(*cuda_launch_lock, 0);
+    scheduler->FinishComm();
+
+    CUDACHECK(cudaStreamSynchronize(stream));
     auto host_recv_offset = recv_offset.CopyTo({kDLCPU, 0}, stream);
     CUDACHECK(cudaStreamSynchronize(stream));
     IdType total_recv_size = host_recv_offset.Ptr<IdType>()[world_size] * expand_size;
     auto recvbuff = IdArray::Empty({total_recv_size}, input->dtype, dgl_context);
-    CUDACHECK(cudaStreamSynchronize(stream));
-    scheduler->FinishComm();
 
     // Exclusive all to all
     if(world_size > 1) {
-      scheduler->TryComm(comm_token);
-      CustomAlltoall(input.Ptr<void>(), send_offset.Ptr<IdType>(), recvbuff.Ptr<void>(), recv_offset.Ptr<IdType>(), type_bytes * expand_size, input->dtype.bits / 8, comm_info, rank, world_size);
+      scheduler->TryComm(thread_id);
+      CustomAlltoall(input.Ptr<void>(), send_offset.Ptr<IdType>(), recvbuff.Ptr<void>(), recv_offset.Ptr<IdType>(), type_bytes * expand_size, input->dtype.bits / 8, comm_info, rank, world_size, (int *)cuda_launch_lock);
+      // while (*cuda_launch_lock > 0);
+      // CUDACHECK(cudaStreamSynchronize(stream));
+      // CHECK_EQ(*cuda_launch_lock, 0);
       scheduler->FinishComm();
     }
 
@@ -405,20 +417,26 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     return {recvbuff, recv_offset};
   } else {
     // NCCL
-    CHECK(nccl_comm != nullptr);
     CHECK(send_offset->dtype.bits == 64);
     auto stream = CUDAThreadEntry::ThreadLocal()->stream;
+    auto data_copy_stream = CUDAThreadEntry::ThreadLocal()->data_copy_stream;
     auto dgl_context = input->ctx;
+    auto *ds_context = DSContext::Global();
     auto host_dgl_context = DLContext{kDLCPU, 0};
     auto send_sizes = Diff(send_offset);
+    int comm_token = CUDAThreadEntry::ThreadLocal()->thread_id;
     IdArray recv_sizes = IdArray::Empty({world_size}, send_offset->dtype, dgl_context);
     IdArray range_seq = Range(0, world_size + 1, 64, host_dgl_context);
-    
-    scheduler->TryComm(comm_token);
+    int thread_id = CUDAThreadEntry::ThreadLocal()->thread_id;
+    ncclComm_t nccl_comm = ds_context->nccl_comm[thread_id];
+
+    scheduler->TryComm(thread_id);
     NCCLAllToAll<int64_t, ncclInt64>(send_sizes, range_seq, recv_sizes, range_seq, 1, rank, world_size, nccl_comm);
+    //CUDACHECK(cudaStreamSynchronize(stream));
     scheduler->FinishComm();
 
     auto host_send_offset = send_offset.CopyTo(host_dgl_context, stream);
+    CUDACHECK(cudaStreamSynchronize(data_copy_stream));
     auto recv_offset = CumSum(recv_sizes, true);
     CUDACHECK(cudaStreamSynchronize(stream));
     IdArray host_recv_offset = recv_offset.CopyTo(host_dgl_context, stream);
@@ -426,13 +444,15 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     int n_recv = host_recv_offset_ptr[world_size] * expand_size;
     auto recvbuff = IdArray::Empty({n_recv}, input->dtype, dgl_context);
 
-    scheduler->TryComm(comm_token);
+    scheduler->TryComm(thread_id);
     if(input->dtype.bits == 32) {
       NCCLAllToAll<int, ncclInt32>(input, host_send_offset, recvbuff, host_recv_offset, expand_size, rank, world_size, nccl_comm);
     } else {
       NCCLAllToAll<int64_t, ncclInt64>(input, host_send_offset, recvbuff, host_recv_offset, expand_size, rank, world_size, nccl_comm);
     }
+    //CUDACHECK(cudaStreamSynchronize(stream));
     scheduler->FinishComm();
+    CUDACHECK(cudaStreamSynchronize(data_copy_stream));
     return {recvbuff, recv_offset};
   }
 }

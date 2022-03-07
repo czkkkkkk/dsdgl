@@ -35,8 +35,8 @@ void Sample(IdArray frontier, const HeteroGraphPtr hg, int fanout, bool replace,
   assert(hg->NumEdgeTypes() == 1);
   dgl_type_t etype = 0;
   CSRMatrix csr_mat = hg->GetCSRMatrix(etype);
-  // SampleNeighbors(frontier, csr_mat, fanout, neighbors, edges);
-  SampleNeighborsV2(frontier, csr_mat, fanout, neighbors, edges);
+  SampleNeighbors(frontier, csr_mat, fanout, neighbors, edges);
+  // SampleNeighborsV2(frontier, csr_mat, fanout, neighbors, edges);
 }
 
 void Check(IdArray array, IdType limit) {
@@ -103,18 +103,17 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   Cluster(rank, seeds, min_vids, world_size, &send_sizes, &send_offset);
 
   IdArray frontier, recv_offset;
-  std::tie(frontier, recv_offset) = Alltoall(seeds, send_offset, 1, rank, world_size, context->nccl_comm, true);
+  std::tie(frontier, recv_offset) = Alltoall(seeds, send_offset, 1, rank, world_size);
 
   ConvertGidToLid(frontier, min_vids, rank);
   IdArray neighbors, edges;
   Sample(frontier, hg.sptr(), fanout, replace, &neighbors, &edges);
   
   IdArray reshuffled_neighbors, reshuffle_recv_offset;
-  std::tie(reshuffled_neighbors, reshuffle_recv_offset) = Alltoall(neighbors, recv_offset, fanout, rank, world_size, context->nccl_comm, true);
+  std::tie(reshuffled_neighbors, reshuffle_recv_offset) = Alltoall(neighbors, recv_offset, fanout, rank, world_size);
 
   HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, reshuffled_neighbors);
   
-  MemoryManager::Global()->ClearUseCount();
   *rv = HeteroGraphRef(subg);
 });
 

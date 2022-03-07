@@ -90,7 +90,7 @@ void _TestAlltoall(int rank, int world_size, const Vec3d<T>& input_all, int expa
   IdArray sendbuff = IdArray::FromVector(host_sendbuff).CopyTo({kDLGPU, rank}, stream);
   IdArray send_offset = IdArray::FromVector(host_send_offset).CopyTo({kDLGPU, rank}, stream);
   IdArray recvbuff, recv_offset;
-  std::tie(recvbuff, recv_offset) = Alltoall(sendbuff, send_offset, expand_size, rank, world_size, DSContext::Global()->nccl_comm);
+  std::tie(recvbuff, recv_offset) = Alltoall(sendbuff, send_offset, expand_size, rank, world_size);
   CheckVectorEq(recv_offset.ToVector<int64_t>(), exp_recv_offset);
   CheckVectorEq(recvbuff.ToVector<T>(), exp_recvbuff);
 }
@@ -178,6 +178,9 @@ TEST(DSSampling, Alltoall32bits) {
 template<typename T>
 void _AlltoallBenchmark(int rank, int world_size, int size, int expand_size=1) {
   auto stream = CUDAThreadEntry::ThreadLocal()->stream;
+  CUDAThreadEntry::ThreadLocal()->thread_id=0;
+  cudaHostRegister((void*)&(CUDAThreadEntry::ThreadLocal()->cuda_launch_lock), sizeof(int), cudaHostRegisterMapped);
+  cudaDeviceSynchronize();
   std::vector<int64_t> send_offset(world_size + 1, 0);
   for(int i = 1; i <= world_size; ++i) {
     send_offset[i] = i * size;
@@ -189,13 +192,13 @@ void _AlltoallBenchmark(int rank, int world_size, int size, int expand_size=1) {
   IdArray recvbuff, recv_offset;
   // warmup
   for(int i = 0; i < 5; ++i) {
-    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, expand_size, rank, world_size, DSContext::Global()->nccl_comm);
+    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, expand_size, rank, world_size);
   }
   CUDACHECK(cudaDeviceSynchronize());
   int num_iters = 20;
   auto start_ts = std::chrono::high_resolution_clock::now();
   for(int i = 0; i < num_iters; ++i) {
-    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, expand_size, rank, world_size, DSContext::Global()->nccl_comm);
+    std::tie(recvbuff, recv_offset) = Alltoall(dgl_sendbuff, dgl_send_offset, expand_size, rank, world_size);
   }
   CUDACHECK(cudaDeviceSynchronize());
   auto end_ts = std::chrono::high_resolution_clock::now();

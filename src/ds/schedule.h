@@ -1,9 +1,14 @@
 #ifndef DGL_DS_SCHEDULE_H
 #define DGL_DS_SCHEDULE_H
 
+#include <dgl/runtime/container.h>
+#include <dgl/packed_func_ext.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <unistd.h>
+
 #include "context.h"
+#include "utils.h"
 #include "buffer.h"
 
 namespace dgl {
@@ -13,24 +18,18 @@ using namespace dgl::aten;
 
 namespace ds {
 
-enum CommToken {
-  COMM_INIT,
-  COMM_SAMPLE,
-  COMM_LOAD,
-  COMM_WAIT
-};
-
 class Scheduler {
 public:
-  Scheduler() : comm_tokens_(50), comm_requests_(50), cur_token_(COMM_INIT) {}
+  // use stream_t value as token
+  Scheduler() : comm_tokens_(50), comm_requests_(50), cur_token_(-1) {}
 
   void Schedule() {
     auto* ds_context = DSContext::Global();
-    CommToken next_token, expect = COMM_INIT;
+    int next_token, expect = -1;
     while (true) {
       next_token = comm_tokens_.Get();
       while (!cur_token_.compare_exchange_weak(expect, next_token)) {
-        expect = COMM_INIT;
+        expect = -1;
       }
     }
   }
@@ -38,7 +37,7 @@ public:
   void Coordinate() {
     auto* ds_context = DSContext::Global();
     int rank = ds_context->rank;
-    CommToken next_token;
+    int next_token;
     while (true) {
       if (rank == 0) {
         next_token = comm_requests_.Get();
@@ -49,22 +48,17 @@ public:
     }
   }
 
-  void TryComm(CommToken token) {
+  void TryComm(int token) {
     auto* ds_context = DSContext::Global();
-    CommToken expect = token;
     if (ds_context->rank == 0) {
       comm_requests_.Put(token);
     }
-    while (!cur_token_.compare_exchange_weak(expect, COMM_WAIT)) {
-      expect = token;
-    }
+    //wait for my turn to communicate
+    while (cur_token_.load() != token);
   }
 
   void FinishComm() {
-    auto* ds_context = DSContext::Global();
-    CommToken expect = COMM_WAIT;
-    bool flag = cur_token_.compare_exchange_weak(expect, COMM_INIT);
-    CHECK_EQ(flag, true);
+    cur_token_.store(-1);
   }
 
   static Scheduler* Global() {
@@ -73,9 +67,9 @@ public:
   }
 
 private:
-  Buffer<CommToken> comm_tokens_;
-  Buffer<CommToken> comm_requests_;
-  std::atomic<CommToken> cur_token_;
+  Buffer<int> comm_tokens_;
+  Buffer<int> comm_requests_;
+  std::atomic<int> cur_token_;
 
 };
 

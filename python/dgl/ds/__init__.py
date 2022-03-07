@@ -12,7 +12,7 @@ class DummyOp(th.autograd.Function):
         import threading
         print('current thread:', threading.get_ident())
         s = th.cuda.current_stream()
-        _CAPI_DGLDSSetStream(s._as_parameter_)
+        _CAPI_DGLDSSetStream(s._as_parameter_, 0)
         return input
     
     @staticmethod
@@ -20,11 +20,11 @@ class DummyOp(th.autograd.Function):
         import threading
         print('current thread:', threading.get_ident())
         s = th.cuda.current_stream()
-        _CAPI_DGLDSSetStream(s._as_parameter_)
+        _CAPI_DGLDSSetStream(s._as_parameter_, 0)
         return grad_output
 
-def init(rank, world_size):
-    _CAPI_DGLDSInitialize(rank, world_size)
+def init(rank, world_size, thread_num=2):
+    _CAPI_DGLDSInitialize(rank, world_size, thread_num)
 
 # dgl thread local stream for both forward and backward threads
 def set_device_thread_local_stream(device, s):
@@ -33,7 +33,7 @@ def set_device_thread_local_stream(device, s):
         loss = DummyOp.apply(a)
         loss.backward()
 
-def set_thread_local_stream(s):
-    _CAPI_DGLDSSetStream(s._as_parameter_)
+def set_thread_local_stream(s, thread_id=0):
+    _CAPI_DGLDSSetStream(s._as_parameter_, thread_id)
 
 _init_api("dgl.ds")
