@@ -91,13 +91,13 @@ NDArray LocalSubtensorsPartitionCacheSomeFeats(IdArray input_nodes, IdArray min_
   Cluster(rank, dev_nodes, min_vids, world_size, &send_sizes, &send_offset);
 
   IdArray shuffled_dev_nodes, recv_offset;
-  std::tie(shuffled_dev_nodes, recv_offset) = Alltoall(dev_nodes, send_offset, 1, rank, world_size, context->nccl_comm_load, false);
+  std::tie(shuffled_dev_nodes, recv_offset) = Alltoall(dev_nodes, send_offset, 1, rank, world_size);
 
   IdArray features_to_send = IdArray::Empty({shuffled_dev_nodes->shape[0] * feat_dim}, dev_feats->dtype, shuffled_dev_nodes->ctx);
   IndexSelect(shuffled_dev_nodes->shape[0], shuffled_dev_nodes, dev_feats, features_to_send, feat_dim, feat_pos_map);
 
   IdArray features_recv, feature_recv_offset;
-  std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, feat_dim, rank, world_size, context->nccl_comm_load, false);
+  std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, feat_dim, rank, world_size);
 
   IndexSelect(features_recv->shape[0] / feat_dim, NullArray(), features_recv, ret_feats, feat_dim, NullArray(), dev_index);
 

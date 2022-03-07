@@ -258,7 +258,7 @@ if __name__ == '__main__':
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=10, type=int, help='Epochs')
     parser.add_argument('--lr', type=float, default=0.003)
-    parser.add_argument('--feat_mode', default='AllDevice', type=str, help='Feature cache mode. (AllCache, PartitionCache, ReplicateCache)')
+    parser.add_argument('--feat_mode', default='AllCache', type=str, help='Feature cache mode. (AllCache, PartitionCache, ReplicateCache)')
     parser.add_argument('--cache_ratio', default=100, type=int, help='Percentages of features on GPUs')
     args = parser.parse_args()
     
