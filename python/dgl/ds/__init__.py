@@ -4,6 +4,7 @@ import torch as th
 
 from .sampling import *
 from .pin_graph import pin_graph, test_array
+from .cache_feats import cache_feats
 from .load_subtensor import load_subtensor
 
 class DummyOp(th.autograd.Function):

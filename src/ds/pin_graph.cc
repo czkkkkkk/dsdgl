@@ -14,17 +14,9 @@
 #include "cuda/ds_kernel.h"
 #include "cuda/cuda_utils.h"
 #include "./memory_manager.h"
+#include "./utils.h"
 #include <assert.h>
 // #include "cuda/test.h"
-
-#define CUDACHECK(cmd) do {                         \
-  cudaError_t e = cmd;                              \
-  if( e != cudaSuccess ) {                          \
-    printf("Failed: Cuda error %s:%d '%s'\n",             \
-        __FILE__,__LINE__,cudaGetErrorString(e));   \
-    exit(EXIT_FAILURE);                             \
-  }                                                 \
-} while(0)
 
 namespace dgl {
 
@@ -49,8 +41,8 @@ DGL_REGISTER_GLOBAL("ds.pin_graph._CAPI_DGLDSPinGraph")
   int rank = args[1];
   HeteroGraphPtr hg_ptr = hg.sptr();
   CSRMatrix mat = hg_ptr->GetCSRMatrix(0);
-  mat.indptr = CreateShmArray(mat.indptr, mat.indptr->shape[0], "uva_graph_indptr");
-  mat.indices = CreateShmArray(mat.indices, mat.indices->shape[0], "uva_graph_indices");
+  mat.indptr = CreateShmArray(mat.indptr, "uva_graph_indptr");
+  mat.indices = CreateShmArray(mat.indices, "uva_graph_indices");
   int64_t n_vertices = hg_ptr->GetRelationGraph(0)->NumVertices(0);
   int64_t n_edges = hg_ptr->GetRelationGraph(0)->NumEdges(0);
   auto edge_ids = Range(0, n_edges, 64, {kDLGPU, rank});

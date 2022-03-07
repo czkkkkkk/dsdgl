@@ -129,15 +129,15 @@ class SubtensorLoader(Thread):
   lock_ = threading.Lock()
   sem_ = threading.Semaphore(0)
 
-  def __init__(self, features, labels, min_vids, in_mpmc_queue, out_pc_queue, rank, num_epochs, thread_id, sampler_number, loader_number, batches_per_loader):
+  def __init__(self, labels, min_vids, in_mpmc_queue, out_pc_queue, rank, num_epochs, feat_dim, thread_id, sampler_number, loader_number, batches_per_loader):
     Thread.__init__(self)
     self.rank = rank
-    self.features = features
     self.labels = labels
     self.min_vids = min_vids
     self.in_mpmc_queue = in_mpmc_queue
     self.out_pc_queue = out_pc_queue
     self.num_epochs = num_epochs
+    self.feat_dim = feat_dim
     self.thread_id = thread_id
     self.sampler_number = sampler_number
     self.loader_number = loader_number
@@ -159,7 +159,7 @@ class SubtensorLoader(Thread):
           input_nodes = sample_result[0]
           seeds = sample_result[1]
           blocks = sample_result[2]
-          batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
+          batch_inputs, batch_labels = dgl.ds.load_subtensor(self.labels, input_nodes, seeds, self.min_vids, self.feat_dim)
           s.synchronize()
           print("rank", self.rank, "loader", self.thread_id + self.sampler_number, "wait to put data")
           self.out_pc_queue.put((batch_inputs, batch_labels, blocks), self.thread_id)
@@ -199,15 +199,14 @@ def run(rank, args, train_label):
 
     # print('# batch: ', train_nid.size()[0] / args.batch_size)
     th.distributed.barrier()
+    dgl.ds.cache_feats(args.feat_mode, g, node_feats['_N/features'], args.cache_ratio)
     #tansfer graph and train nodes to gpu
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
     train_g = g.formats(['csr'])
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
     train_g = train_g.to(device)
-    train_feature = node_feats['_N/features']
-    in_feats = train_feature.shape[1]
-    train_feature = train_feature.to(device)
+    in_feats = node_feats['_N/features'].shape[1] 
     train_label = train_label.to(device)
     global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu
@@ -269,7 +268,7 @@ def run(rank, args, train_label):
     load_workers = []
     for i in range(loader_number):
       thread_id = i
-      load_workers.append(SubtensorLoader(train_feature, train_label, min_vids, sample_data_buffer, subtensor_data_buffer, rank, args.num_epochs, thread_id, sampler_number, loader_number, batch_per_loader))
+      load_workers.append(SubtensorLoader(train_label, min_vids, sample_data_buffer, subtensor_data_buffer, rank, args.num_epochs, in_feats, thread_id, sampler_number, loader_number, batch_per_loader))
       load_workers[i].start()
 
     train_time = 0
@@ -319,6 +318,8 @@ if __name__ == '__main__':
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
     parser.add_argument('--lr', type=float, default=0.003)
+    parser.add_argument('--feat_mode', default='AllCache', type=str, help='Feature cache mode. (AllCache, PartitionCache, ReplicateCache)')
+    parser.add_argument('--cache_ratio', default=100, type=int, help='Percentages of features on GPUs')
     args = parser.parse_args()
     
     all_labels = th.tensor([])

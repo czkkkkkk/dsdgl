@@ -151,13 +151,12 @@ int GetAvailablePort();
 std::string GetHostName();
 
 /**
- * @brief Create an IdArray on shared memory. The memory is created based on the array on the root process. However, other processes must have the correct data type for the array and correct size.
+ * @brief Create an IdArray on shared memory. The memory is created based on the array on the root process. However, other processes must have the correct data type for the array.
  * @param arr IdArray
- * @param size the number of element
  * @param shm_name the name of the shared memory
  * @return IdArray with shared memory
  */
-IdArray CreateShmArray(IdArray arr, size_t size, const std::string& shm_name);
+IdArray CreateShmArray(IdArray arr, const std::string& shm_name);
 
 }
 }

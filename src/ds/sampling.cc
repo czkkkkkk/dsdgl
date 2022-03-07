@@ -15,15 +15,6 @@
 #include "./memory_manager.h"
 #include "./cuda/alltoall.h"
 
-#define CUDACHECK(cmd) do {                         \
-  cudaError_t e = cmd;                              \
-  if( e != cudaSuccess ) {                          \
-    printf("Failed: Cuda error %s:%d '%s'\n",             \
-        __FILE__,__LINE__,cudaGetErrorString(e));   \
-    exit(EXIT_FAILURE);                             \
-  }                                                 \
-} while(0)
-
 namespace dgl {
 
 using namespace dgl::runtime;

@@ -19,24 +19,6 @@
 #include "../context.h"
 #include "./scan.h"
 
-#define CUDACHECK(cmd) do {                         \
-  cudaError_t e = cmd;                              \
-  if( e != cudaSuccess ) {                          \
-    printf("Failed: Cuda error %s:%d '%s'\n",             \
-        __FILE__,__LINE__,cudaGetErrorString(e));   \
-    exit(EXIT_FAILURE);                             \
-  }                                                 \
-} while(0)
-
-#define NCCLCHECK(cmd) do {                         \
-  ncclResult_t r = cmd;                             \
-  if (r!= ncclSuccess) {                            \
-    printf("Failed, NCCL error %s:%d '%s'\n",             \
-        __FILE__,__LINE__,ncclGetErrorString(r));   \
-    exit(EXIT_FAILURE);                             \
-  }                                                 \
-} while(0)
-
 using namespace dgl::runtime;
 using namespace dgl::aten;
 
@@ -341,41 +323,99 @@ __global__ void _CSRRowWiseLoadSubtensorKernel(
 template <int BLOCK_ROWS>
 __global__ void _CSRRowWiseLoadSubtensorAlignedKernel(
     IdType dim, 
-    IdType num_frontier, 
-    IdType *frontier,
-    DataType *features,
-    DataType *features_to_send) {
+    IdType size, 
+    IdType *index,
+    IdType *input_mapping,
+    IdType *output_mapping,
+    DataType *input_table,
+    DataType *output_table) {
   IdType out_row = blockIdx.x*blockDim.y+threadIdx.y;
-  while (out_row < num_frontier) {
-    const IdType row = frontier[out_row];
-    const IdType origin_in_row_start = row * dim;
-    const IdType out_row_start = out_row * dim;
+  while (out_row < size) {
+    const IdType row = index? index[out_row]: out_row;
+    const IdType origin_in_row_start = input_mapping? input_mapping[row] * dim: row * dim;
+    const IdType out_row_start = output_mapping? output_mapping[out_row] * dim: out_row * dim;
     const IdType in_row_start = origin_in_row_start & ~0x3;
     for (int idx = threadIdx.x; idx < dim; idx += blockDim.x) {
       if (in_row_start + idx >= origin_in_row_start) {
-        features_to_send[out_row_start + idx] = features[in_row_start + idx];
+        output_table[out_row_start + idx] = input_table[in_row_start + idx];
       }
     }
     out_row += gridDim.x * blockDim.y;
   }
 }
 
-void LoadFeature(IdArray frontier, IdArray features, IdArray *features_to_send) {
-  auto dgl_ctx = features->ctx;
-  int n_frontier = frontier->shape[0], dim = features->shape[1];
-  *features_to_send = IdArray::Empty({n_frontier * dim}, features->dtype, dgl_ctx);
+void IndexSelect(IdType size, IdArray index, IdArray input_table, IdArray output_table, int feat_dim, IdArray input_mapping, IdArray output_mapping, cudaStream_t stream) {
+  if(stream == 0) {
+    stream = CUDAThreadEntry::ThreadLocal()->stream;
+  }
+  // *features_to_send = IdArray::Empty({n_frontier * dim}, features->dtype, dgl_ctx);
   constexpr int BLOCK_X = 128;
   constexpr int BLOCK_ROWS = 4;
   const dim3 block(BLOCK_X, BLOCK_ROWS);
-  int BLOCK_NUM = n_frontier / BLOCK_ROWS;
+  int BLOCK_NUM = (size + BLOCK_ROWS - 1) / BLOCK_ROWS;
   const dim3 grid(BLOCK_NUM);
-  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  IdType* index_ptr = IsNullArray(index)? nullptr: index.Ptr<IdType>();
+  IdType* input_mapping_ptr = IsNullArray(input_mapping)? nullptr: input_mapping.Ptr<IdType>();
+  IdType* output_mapping_ptr = IsNullArray(output_mapping)? nullptr: output_mapping.Ptr<IdType>();
   if (grid.x > 0) {
-    _CSRRowWiseLoadSubtensorAlignedKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
-      dim, n_frontier, frontier.Ptr<IdType>(), features.Ptr<DataType>(), features_to_send->Ptr<DataType>()
+    _CSRRowWiseLoadSubtensorAlignedKernel<BLOCK_ROWS><<<grid, block, 0, stream>>>(
+      feat_dim, size, index_ptr, input_mapping_ptr, output_mapping_ptr, input_table.Ptr<DataType>(), output_table.Ptr<DataType>()
     );
     CUDACHECK(cudaGetLastError());
   }
+}
+
+static constexpr int FEAT_ON_DEVICE = 0;
+static constexpr int FEAT_ON_HOST = 1;
+
+__global__
+void _FeatTypePartKernel(int n_nodes, IdType* nodes, 
+                                IdType* feat_pos_map,
+                                IdType* counter,
+                                IdType* part_ids,
+                                IdType* part_pos) {
+  __shared__ IdType local_count[2];
+  IdType idx = blockDim.x * blockIdx.x + threadIdx.x;
+  int stride = gridDim.x * blockDim.x;
+
+  if (threadIdx.x < 2) {
+    local_count[threadIdx.x] = 0;
+  }
+
+  __syncthreads();
+
+  while(idx < n_nodes) {
+    // Global nid
+    IdType nid = nodes[idx];
+    int feat_type = feat_pos_map[nid] < -1? FEAT_ON_HOST: FEAT_ON_DEVICE;
+    atomicAdd((unsigned long long*)(local_count + feat_type), 1);
+    part_ids[idx] = feat_type;
+    if(feat_type == FEAT_ON_HOST) {
+      part_pos[idx] = ENCODE_SHARED_ID(feat_pos_map[nid]);
+    } else {
+      part_pos[idx] = nid; 
+    }
+    idx += stride;
+  }
+  __syncthreads();
+
+  if (threadIdx.x < 2) {
+    atomicAdd((unsigned long long*)(counter + threadIdx.x), local_count[threadIdx.x]);
+  }
+}
+
+// part_ids, part_pos, part_offset
+std::tuple<IdArray, IdArray, IdArray> GetFeatTypePartIds(IdArray nodes, IdArray feat_pos_map) {
+  IdArray part_ids = IdArray::Empty({nodes->shape[0]}, nodes->dtype, nodes->ctx);
+  IdArray part_pos = IdArray::Empty({nodes->shape[0]}, nodes->dtype, nodes->ctx);
+  IdArray part_sizes = Full<IdType>(0, 2, nodes->ctx);
+  int n_threads = 1024;
+  int n_blocks = (nodes->shape[0] + n_threads - 1) / n_threads;
+  if (n_blocks == 0) n_blocks = 1;
+  auto* thr_entry = CUDAThreadEntry::ThreadLocal();
+  _FeatTypePartKernel<<<n_blocks, n_threads, 0, thr_entry->stream>>>(nodes->shape[0], nodes.Ptr<IdType>(), feat_pos_map.Ptr<IdType>(), part_sizes.Ptr<IdType>(), part_ids.Ptr<IdType>(), part_pos.Ptr<IdType>());
+  auto part_offset = CumSum(part_sizes, true);
+  return {part_ids, part_pos, part_offset};
 }
 
 }
