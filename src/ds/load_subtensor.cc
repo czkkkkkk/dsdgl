@@ -42,11 +42,11 @@ NDArray LoadSubtensorsPartitionCacheAllFeats(IdArray input_nodes, IdArray min_vi
   std::tie(frontier, recv_offset) = Alltoall(input_nodes, send_offset, 1, rank, world_size);
 
   ConvertGidToLid(frontier, min_vids, rank);
-  IdArray features_to_send = IdArray::Empty({frontier->shape[0] * dev_feats->shape[1]}, dev_feats->dtype, frontier->ctx);
+  IdArray features_to_send = IdArray::Empty({frontier->shape[0] * feat_dim}, dev_feats->dtype, frontier->ctx);
   IndexSelect(frontier->shape[0], frontier, dev_feats, features_to_send, feat_dim);
 
   IdArray features_recv, feature_recv_offset;
-  std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, feat_dim, rank, world_size);
+  std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, feat_dim, rank, world_size, send_offset);
 
   return features_recv;
 
@@ -97,7 +97,7 @@ NDArray LocalSubtensorsPartitionCacheSomeFeats(IdArray input_nodes, IdArray min_
   IndexSelect(shuffled_dev_nodes->shape[0], shuffled_dev_nodes, dev_feats, features_to_send, feat_dim, feat_pos_map);
 
   IdArray features_recv, feature_recv_offset;
-  std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, feat_dim, rank, world_size);
+  std::tie(features_recv, feature_recv_offset) = Alltoall(features_to_send, recv_offset, feat_dim, rank, world_size, send_offset);
 
   IndexSelect(features_recv->shape[0] / feat_dim, NullArray(), features_recv, ret_feats, feat_dim, NullArray(), dev_index);
 
