@@ -348,7 +348,6 @@ void NCCLAllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer,
   int type_bytes = sizeof(T);
   IdType* send_offset_ptr = send_offset.Ptr<IdType>();
   IdType* recv_offset_ptr = recv_offset.Ptr<IdType>();
-  CUDACHECK(cudaStreamSynchronize(stream));
   CUDACHECK(cudaMemcpyAsync(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
                        send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
                        (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice, data_copy_stream));
@@ -366,7 +365,7 @@ void NCCLAllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer,
   ncclGroupEnd();
 }
 
-std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size) {
+std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size, IdArray recv_offset) {
   auto* scheduler = Scheduler::Global();
   if(!GetEnvParam("USE_NCCL", 1)) {
     auto stream = CUDAThreadEntry::ThreadLocal()->stream;
@@ -382,14 +381,14 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     auto host_send_offset = send_offset.CopyTo({kDLCPU, 0}, data_copy_stream);
 
     CommInfo *comm_info = ds_context->comm_info[thread_id].get();
-    scheduler->TryComm(thread_id);
-    auto recv_offset = ExchangeSendSizes(send_offset, comm_info, rank, world_size, (int *)cuda_launch_lock);
-    // while (*cuda_launch_lock > 0);
-    // CUDACHECK(cudaStreamSynchronize(stream));
-    // CHECK_EQ(*cuda_launch_lock, 0);
-    scheduler->FinishComm();
-
-    CUDACHECK(cudaStreamSynchronize(stream));
+    if(IsNullArray(recv_offset)) {
+      scheduler->TryComm(thread_id);
+      recv_offset = ExchangeSendSizes(send_offset, comm_info, rank, world_size, (int *)cuda_launch_lock);
+      // while (*cuda_launch_lock > 0);
+      // CUDACHECK(cudaStreamSynchronize(stream));
+      // CHECK_EQ(*cuda_launch_lock, 0);
+      scheduler->FinishComm();
+    }
     auto host_recv_offset = recv_offset.CopyTo({kDLCPU, 0}, stream);
     CUDACHECK(cudaStreamSynchronize(stream));
     IdType total_recv_size = host_recv_offset.Ptr<IdType>()[world_size] * expand_size;
@@ -404,6 +403,7 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
       // CHECK_EQ(*cuda_launch_lock, 0);
       scheduler->FinishComm();
     }
+    CUDACHECK(cudaStreamSynchronize(data_copy_stream));
 
     // send data to myself in parallel
     auto* host_send_offset_ptr = host_send_offset.Ptr<IdType>();
@@ -425,21 +425,25 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     auto host_dgl_context = DLContext{kDLCPU, 0};
     auto send_sizes = Diff(send_offset);
     int comm_token = CUDAThreadEntry::ThreadLocal()->thread_id;
-    IdArray recv_sizes = IdArray::Empty({world_size}, send_offset->dtype, dgl_context);
-    IdArray range_seq = Range(0, world_size + 1, 64, host_dgl_context);
     int thread_id = CUDAThreadEntry::ThreadLocal()->thread_id;
     ncclComm_t nccl_comm = ds_context->nccl_comm[thread_id];
 
-    scheduler->TryComm(thread_id);
-    NCCLAllToAll<int64_t, ncclInt64>(send_sizes, range_seq, recv_sizes, range_seq, 1, rank, world_size, nccl_comm);
-    //CUDACHECK(cudaStreamSynchronize(stream));
-    scheduler->FinishComm();
-
-    auto host_send_offset = send_offset.CopyTo(host_dgl_context, stream);
-    CUDACHECK(cudaStreamSynchronize(data_copy_stream));
-    auto recv_offset = CumSum(recv_sizes, true);
+    // NOTE: to guarantee the send_offset is ready
     CUDACHECK(cudaStreamSynchronize(stream));
+    auto host_send_offset = send_offset.CopyTo(host_dgl_context, data_copy_stream);
+    if(IsNullArray(recv_offset)) {
+      IdArray recv_sizes = IdArray::Empty({world_size}, send_offset->dtype, dgl_context);
+      IdArray range_seq = Range(0, world_size + 1, 64, host_dgl_context);
+      scheduler->TryComm(thread_id);
+      NCCLAllToAll<int64_t, ncclInt64>(send_sizes, range_seq, recv_sizes, range_seq, 1, rank, world_size, nccl_comm);
+      //CUDACHECK(cudaStreamSynchronize(stream));
+      scheduler->FinishComm();
+      recv_offset = CumSum(recv_sizes, true);
+    }
+
     IdArray host_recv_offset = recv_offset.CopyTo(host_dgl_context, stream);
+    CUDACHECK(cudaStreamSynchronize(data_copy_stream));
+    CUDACHECK(cudaStreamSynchronize(stream));
     auto* host_recv_offset_ptr = host_recv_offset.Ptr<IdType>();
     int n_recv = host_recv_offset_ptr[world_size] * expand_size;
     auto recvbuff = IdArray::Empty({n_recv}, input->dtype, dgl_context);
@@ -452,7 +456,6 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     }
     //CUDACHECK(cudaStreamSynchronize(stream));
     scheduler->FinishComm();
-    CUDACHECK(cudaStreamSynchronize(data_copy_stream));
     return {recvbuff, recv_offset};
   }
 }
