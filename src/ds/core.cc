@@ -13,6 +13,7 @@
 #include "./utils.h"
 #include "../runtime/cuda/cuda_common.h"
 #include "schedule.h"
+#include "./kernel_controller.h"
 
 using namespace dgl::runtime;
 
@@ -54,7 +55,7 @@ void InitNcclComm(ncclComm_t *nccl_comm, DSContext *ds_context, int world_size, 
   ncclCommInitRank(nccl_comm, world_size, nccl_id, rank);
 }
 
-void Initialize(int rank, int world_size, int thread_num) {
+void Initialize(int rank, int world_size, int thread_num, bool enable_kernel_control) {
   LOG(INFO) << "Rank [" << rank << "] initializing DS context";
   auto* ds_context = DSContext::Global();
   ds_context->initialized = true;
@@ -67,6 +68,9 @@ void Initialize(int rank, int world_size, int thread_num) {
   cudaSetDevice(rank);
 
   ds_context->thread_num = thread_num;
+
+  ds_context->enable_kernel_control = enable_kernel_control;
+  LOG(INFO) << "Enable kernel control? " << enable_kernel_control;
 
   int use_nccl = GetEnvParam("USE_NCCL", 0);
   if (!use_nccl) {
@@ -92,6 +96,7 @@ void Initialize(int rank, int world_size, int thread_num) {
   coordinator.detach();
 
   LOG(INFO) << "Rank " + std::to_string(rank) + " successfully builds nccl communicator";
+
 }
 
 DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")
@@ -99,7 +104,8 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")
   int rank = args[0];
   int world_size = args[1];
   int thread_num = args[2];
-  Initialize(rank, world_size, thread_num);
+  bool enable_kernel_control = args[3];
+  Initialize(rank, world_size, thread_num, enable_kernel_control);
 });
 
 // Set dgl thread local stream
@@ -107,9 +113,11 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetStream")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   void* s = args[0];
   int thread_id = args[1];
+  int role = args[2];
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   thr_entry->thread_id = thread_id;
   thr_entry->stream = (cudaStream_t)s;
+  thr_entry->role = role;
   LOG(INFO) << "Set local stream: " << thr_entry->stream;
   CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
   
@@ -119,6 +127,12 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetStream")
   CUDACHECK(cudaHostRegister((void*)&(thr_entry->cuda_launch_lock), sizeof(int), cudaHostRegisterMapped));
   thr_entry->cuda_launch_lock = 0;
   CUDACHECK(cudaDeviceSynchronize());
+});
+
+DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetQueueSize")
+.set_body([] (DGLArgs args, DGLRetValue *rv) {
+  int queue_size = args[0];
+  KernelController::SetQueueSize(queue_size);
 });
 
 }

@@ -6,6 +6,7 @@
 #include <dgl/runtime/registry.h>
 #include <dgl/array.h>
 #include <memory>
+#include <atomic>
 
 #include "coordinator.h"
 #include "./comm/comm_info.h"
@@ -20,6 +21,9 @@ namespace ds {
 enum FeatMode { kFeatModeAllCache, kFeatModePartitionCache, kFeatModeReplicateCache };
 
 #define ENCODE_SHARED_ID(i) (-(i)-2)
+
+#define SAMPLER_ROLE 0
+#define LOADER_ROLE 1
 
 struct DSContext {
   bool initialized = false;
@@ -36,6 +40,11 @@ struct DSContext {
   FeatMode feat_mode;
   IdArray dev_feats, shared_feats, feat_pos_map;
   int feat_dim;
+
+  // Kernel controller
+  bool enable_kernel_control;
+  std::atomic<int> sampler_queue_size{0}, loader_queue_size{0};
+
 
   static DSContext* Global() {
     static DSContext instance;

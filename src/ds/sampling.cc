@@ -106,6 +106,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, reshuffled_neighbors);
   
   *rv = HeteroGraphRef(subg);
+  CUDACHECK(cudaStreamSynchronize(s));
 });
 
 IdArray ToGlobal(IdArray nids, IdArray global_nid_map) {

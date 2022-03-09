@@ -363,6 +363,7 @@ void NCCLAllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer,
     }
   }
   ncclGroupEnd();
+  CUDACHECK(cudaStreamSynchronize(data_copy_stream));
 }
 
 std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int expand_size, int rank, int world_size, IdArray recv_offset) {

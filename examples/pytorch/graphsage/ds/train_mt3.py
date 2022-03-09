@@ -24,6 +24,7 @@ from threading import Thread
 from queue import Queue
 from pc_queue import *
 from torch.nn.parallel import DistributedDataParallel
+import sys
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -103,16 +104,15 @@ class Sampler(Thread):
   def run(self):
     th.cuda.set_device(self.rank)
     s = th.cuda.Stream(device=self.rank)
-    dgl.ds.set_thread_local_stream(s, self.thread_id)
+    dgl.ds.set_thread_local_stream(s, self.thread_id, 0)
     with th.cuda.stream(s):
       for i in range(self.num_epochs):
         for j in range(self.batches):
+          ds.set_queue_size(self.mpmc_queue.size())
           batch = self.dataloader.next()
-          s.synchronize()
+          # s.synchronize()
           (input_nodes, seeds, blocks) = batch
-          print("rank", self.rank, "sampler", self.thread_id, "wait to put data")
           self.mpmc_queue.put((input_nodes, seeds, blocks), self.thread_id)
-          print("rank", self.rank, "sampler", self.thread_id, "finish put data")
         Sampler.lock_.acquire()
         Sampler.finish_sampler_ += 1
         if Sampler.finish_sampler_ == self.sampler_number:
@@ -151,19 +151,18 @@ class SubtensorLoader(Thread):
   def run(self):
     th.cuda.set_device(self.rank)
     s = th.cuda.Stream(device=self.rank)
-    dgl.ds.set_thread_local_stream(s, self.thread_id + self.sampler_number)
+    dgl.ds.set_thread_local_stream(s, self.thread_id + self.sampler_number, 1)
     with th.cuda.stream(s):
       for i in range(self.num_epochs):
         for i in range(self.batches):
           sample_result = self.in_mpmc_queue.get(self.thread_id)
+          ds.set_queue_size(self.out_pc_queue.size())
           input_nodes = sample_result[0]
           seeds = sample_result[1]
           blocks = sample_result[2]
           batch_inputs, batch_labels = dgl.ds.load_subtensor(self.labels, input_nodes, seeds, self.min_vids, self.feat_dim)
-          s.synchronize()
-          print("rank", self.rank, "loader", self.thread_id + self.sampler_number, "wait to put data")
+          # s.synchronize()
           self.out_pc_queue.put((batch_inputs, batch_labels, blocks), self.thread_id)
-          print("rank", self.rank, "loader", self.thread_id + self.sampler_number, "finish put data")
         SubtensorLoader.lock_.acquire()
         SubtensorLoader.finish_loader_ += 1
         if SubtensorLoader.finish_loader_ == self.loader_number:
@@ -183,7 +182,7 @@ def run(rank, args, train_label):
     setup(rank, args.n_ranks)
     sampler_number = 3
     loader_number = 3
-    ds.init(rank, args.n_ranks, thread_num=sampler_number + loader_number)
+    ds.init(rank, args.n_ranks, thread_num=sampler_number + loader_number, enable_kernel_control=False)
     
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
@@ -277,8 +276,6 @@ def run(rank, args, train_label):
         step = 0
         for i in range(total_batches):
           batch_data = subtensor_data_buffer.get(0)
-          print("rank", rank, "get train data")
-          subtensor_data_buffer.size()
           begin = time.time()
           with th.cuda.stream(s):
             batch_inputs = batch_data[0]
@@ -297,7 +294,7 @@ def run(rank, args, train_label):
         if epoch >= skip_epoch:
             total += (toc - tic)
             train_time += step
-        print("rank:", rank, toc - tic)
+        print("Epoch {}, rank {}, train time {}, epoch time{}".format(epoch, rank, step, toc-tic))
     for i in range(sampler_number):
       sample_workers[i].join()
     for i in range(loader_number):

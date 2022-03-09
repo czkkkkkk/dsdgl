@@ -18,6 +18,7 @@
 #include "./alltoall.h"
 #include "../context.h"
 #include "./scan.h"
+#include "../kernel_controller.h"
 
 using namespace dgl::runtime;
 using namespace dgl::aten;
@@ -103,10 +104,12 @@ std::tuple<IdArray, IdArray, IdArray, IdArray> Partition(IdArray seeds, IdArray 
   IdArray part_sizes = Full<int64_t>(0, world_size, dgl_ctx);
   IdArray part_ids = IdArray::Empty({seeds->shape[0]}, seeds->dtype, seeds->ctx);
   int n_threads = 1024;
-  int n_blocks = (seeds->shape[0] + n_threads - 1) / n_threads;
-  if (n_blocks == 0) n_blocks = 1;
+  dim3 block(n_threads);
+  dim3 grid((seeds->shape[0] + n_threads - 1) / n_threads);
+  if (grid.x == 0) grid.x = 1;
+  KernelController::AdjustKernelSize(grid, block);
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
-  _CountDeviceVerticesKernel<<<n_blocks, n_threads, 0, thr_entry->stream>>>(world_size, min_vids.Ptr<IdType>(),
+  _CountDeviceVerticesKernel<<<grid, block, 0, thr_entry->stream>>>(world_size, min_vids.Ptr<IdType>(),
                                                                             seeds->shape[0], seeds.Ptr<IdType>(),
                                                                             part_sizes.Ptr<IdType>(), part_ids.Ptr<IdType>());
   IdArray part_offset = CumSum(part_sizes, true);
@@ -121,10 +124,12 @@ IdArray Partition(IdArray seeds, IdArray min_vids) {
   IdArray part_sizes = Full<int64_t>(0, world_size, dgl_ctx);
   IdArray part_ids = IdArray::Empty({seeds->shape[0]}, seeds->dtype, seeds->ctx);
   int n_threads = 1024;
-  int n_blocks = (seeds->shape[0] + n_threads - 1) / n_threads;
-  if (n_blocks == 0) n_blocks = 1;
+  dim3 block(n_threads);
+  dim3 grid((seeds->shape[0] + n_threads - 1) / n_threads);
+  if (grid.x == 0) grid.x = 1;
+  KernelController::AdjustKernelSize(grid, block);
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
-  _CountDeviceVerticesKernel<<<n_blocks, n_threads, 0, thr_entry->stream>>>(world_size, min_vids.Ptr<IdType>(),
+  _CountDeviceVerticesKernel<<<grid, block, 0, thr_entry->stream>>>(world_size, min_vids.Ptr<IdType>(),
                                                                             seeds->shape[0], seeds.Ptr<IdType>(),
                                                                             part_sizes.Ptr<IdType>(), part_ids.Ptr<IdType>());
   IdArray part_offset = CumSum(part_sizes, true);
@@ -138,10 +143,12 @@ void Cluster(int rank, IdArray seeds, IdArray min_vids, int world_size, IdArray*
   *send_sizes = Full<int64_t>(0, world_size, dgl_ctx);
   IdArray part_ids = IdArray::Empty({seeds->shape[0]}, seeds->dtype, seeds->ctx);
   int n_threads = 1024;
-  int n_blocks = (seeds->shape[0] + n_threads - 1) / n_threads;
-  if (n_blocks == 0) n_blocks = 1;
+  dim3 block(n_threads);
+  dim3 grid((seeds->shape[0] + n_threads - 1) / n_threads);
+  if (grid.x == 0) grid.x = 1;
+  KernelController::AdjustKernelSize(grid, block);
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
-  _CountDeviceVerticesKernel<<<n_blocks, n_threads, 0, thr_entry->stream>>>(world_size, min_vids.Ptr<IdType>(),
+  _CountDeviceVerticesKernel<<<grid, block, 0, thr_entry->stream>>>(world_size, min_vids.Ptr<IdType>(),
                                                                             seeds->shape[0], seeds.Ptr<IdType>(),
                                                                             send_sizes->Ptr<IdType>(), part_ids.Ptr<IdType>());
   *send_offset = CumSum(*send_sizes, true);
@@ -195,8 +202,9 @@ void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* n
 
   constexpr int BLOCK_WARPS = 128/WARP_SIZE;
   constexpr int TILE_SIZE = BLOCK_WARPS*16;
-  const dim3 block(WARP_SIZE, BLOCK_WARPS);
-  const dim3 grid((n_frontier + TILE_SIZE - 1) / TILE_SIZE);
+  dim3 block(WARP_SIZE, BLOCK_WARPS);
+  dim3 grid((n_frontier + TILE_SIZE - 1) / TILE_SIZE);
+  // KernelController::AdjustKernelSize(grid, block);
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   const uint64_t random_seed = 7777777;
   if(grid.x > 0) {
@@ -269,8 +277,9 @@ void Replicate(IdArray src, IdArray *dst, int fanout) {
   auto *dst_ptr = (*dst).Ptr<IdType>();
 
   constexpr int BLOCK_ROWS = 128 / WARP_SIZE;
-  const dim3 block(WARP_SIZE, BLOCK_ROWS);
-  const dim3 grid((n_seeds + block.y - 1) / block.y);
+  dim3 block(WARP_SIZE, BLOCK_ROWS);
+  dim3 grid((n_seeds + block.y - 1) / block.y);
+  KernelController::AdjustKernelSize(grid, block);
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   _CSRRowWiseReplicateKernel<BLOCK_ROWS><<<grid, block, 0, thr_entry->stream>>>(
     n_seeds, src_ptr, dst_ptr, fanout
@@ -351,9 +360,10 @@ void IndexSelect(IdType size, IdArray index, IdArray input_table, IdArray output
   // *features_to_send = IdArray::Empty({n_frontier * dim}, features->dtype, dgl_ctx);
   constexpr int BLOCK_X = 128;
   constexpr int BLOCK_ROWS = 4;
-  const dim3 block(BLOCK_X, BLOCK_ROWS);
+  dim3 block(BLOCK_X, BLOCK_ROWS);
   int BLOCK_NUM = (size + BLOCK_ROWS - 1) / BLOCK_ROWS;
-  const dim3 grid(BLOCK_NUM);
+  dim3 grid(BLOCK_NUM);
+  KernelController::AdjustKernelSize(grid, block);
   IdType* index_ptr = IsNullArray(index)? nullptr: index.Ptr<IdType>();
   IdType* input_mapping_ptr = IsNullArray(input_mapping)? nullptr: input_mapping.Ptr<IdType>();
   IdType* output_mapping_ptr = IsNullArray(output_mapping)? nullptr: output_mapping.Ptr<IdType>();

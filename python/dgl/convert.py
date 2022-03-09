@@ -188,6 +188,25 @@ def graph(data,
 
     return g.to(device)
 
+from collections import namedtuple
+SparseAdjTuple = namedtuple('SparseAdjTuple', ['format', 'arrays'])
+
+def ds_subgraph(data,
+          *,
+          num_nodes=None,
+          idtype=None,
+          device=None,
+          row_sorted=False,
+          col_sorted=False,
+          **deprecated_kwargs):
+    data = ('coo', data)
+    data = SparseAdjTuple(*data)
+    idtype = F.int64
+    # data = SparseAdjTuple(data.format, tuple(F.tensor(a) for a in data.arrays))
+    g = create_from_edges(data.format, data.arrays, '_N', '_E', '_N', num_nodes, num_nodes,
+                          row_sorted=row_sorted, col_sorted=col_sorted)
+    return g.to(device)
+
 def bipartite(data,
               utype='_U', etype='_E', vtype='_V',
               num_nodes=None,

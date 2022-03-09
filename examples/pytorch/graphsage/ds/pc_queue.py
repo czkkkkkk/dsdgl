@@ -105,4 +105,5 @@ class MPMCQueue(object):
     return item
   
   def size(self):
-    print("training data remain:", self.buffer.qsize())
+    # print("training data remain:", self.buffer.qsize())
+    return self.buffer.qsize()
