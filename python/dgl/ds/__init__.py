@@ -13,7 +13,7 @@ class DummyOp(th.autograd.Function):
         import threading
         print('current thread:', threading.get_ident())
         s = th.cuda.current_stream()
-        _CAPI_DGLDSSetStream(s._as_parameter_, 0)
+        _CAPI_DGLDSSetStream(s._as_parameter_, 0, 2)
         return input
     
     @staticmethod
@@ -21,11 +21,11 @@ class DummyOp(th.autograd.Function):
         import threading
         print('current thread:', threading.get_ident())
         s = th.cuda.current_stream()
-        _CAPI_DGLDSSetStream(s._as_parameter_, 0)
+        _CAPI_DGLDSSetStream(s._as_parameter_, 0, 2)
         return grad_output
 
-def init(rank, world_size, thread_num=2):
-    _CAPI_DGLDSInitialize(rank, world_size, thread_num)
+def init(rank, world_size, thread_num=2, enable_kernel_control=False):
+    _CAPI_DGLDSInitialize(rank, world_size, thread_num, enable_kernel_control)
 
 # dgl thread local stream for both forward and backward threads
 def set_device_thread_local_stream(device, s):
@@ -34,7 +34,11 @@ def set_device_thread_local_stream(device, s):
         loss = DummyOp.apply(a)
         loss.backward()
 
-def set_thread_local_stream(s, thread_id=0):
-    _CAPI_DGLDSSetStream(s._as_parameter_, thread_id)
+# Sampler role = 0, loader role = 1.
+def set_thread_local_stream(s, thread_id=0, role=0):
+    _CAPI_DGLDSSetStream(s._as_parameter_, thread_id, role)
+
+def set_queue_size(size):
+    _CAPI_DGLDSSetQueueSize(size)
 
 _init_api("dgl.ds")

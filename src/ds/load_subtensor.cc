@@ -165,6 +165,7 @@ DGL_REGISTER_GLOBAL("ds.load_subtensor._CAPI_DGLDSLoadSubtensor")
   } else {
     CHECK(false);
   }
+  CUDACHECK(cudaStreamSynchronize(CUDAThreadEntry::ThreadLocal()->stream));
 });
 
 

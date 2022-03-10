@@ -4,7 +4,7 @@ from ..base import DGLError, EID
 from ..heterograph import DGLHeteroGraph
 from .. import ndarray as nd
 from .. import utils
-from ..convert import graph
+from ..convert import graph, ds_subgraph
 
 __all__ = [
     'sample_neighbors',
@@ -24,7 +24,8 @@ def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, f
                                          fanout, edge_dir, prob_arrays, replace, global_nid_map, is_local)
 
     src, dst, eid = subgidx.edges(0)
-    ret = graph((dst, src), num_nodes = num_vertices)
+    # ret = graph((dst, src), num_nodes = num_vertices)
+    ret = ds_subgraph((dst, src), num_nodes = num_vertices)
     return ret
 
 def rebalance_train_nids(train_nids, batch_size, global_nid_map):

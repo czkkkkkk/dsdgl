@@ -165,6 +165,7 @@ class CUDAThreadEntry {
   /*! \brief worker thread id for DS */
   int thread_id{0};
   int cuda_launch_lock{0};
+  int role;
   /*! \brief The cusparse handler */
   cusparseHandle_t cusparse_handle{nullptr};
   /*! \brief The cublas handler */
