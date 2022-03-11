@@ -158,6 +158,10 @@ std::string GetHostName();
  */
 IdArray CreateShmArray(IdArray arr, const std::string& shm_name);
 
+IdArray CreatePinnedArray(DLDataType dtype, size_t size);
+
+IdArray CopyArrayToPinned(IdArray arr, cudaStream_t stream);
+
 }
 }
 

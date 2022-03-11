@@ -25,7 +25,8 @@ def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, f
 
     src, dst, eid = subgidx.edges(0)
     # ret = graph((dst, src), num_nodes = num_vertices)
-    ret = ds_subgraph((dst, src), num_nodes = num_vertices)
+    # ret = ds_subgraph((dst, src), num_nodes = num_vertices)
+    ret = DGLHeteroGraph(subgidx)
     return ret
 
 def rebalance_train_nids(train_nids, batch_size, global_nid_map):

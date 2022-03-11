@@ -127,6 +127,12 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetStream")
   CUDACHECK(cudaHostRegister((void*)&(thr_entry->cuda_launch_lock), sizeof(int), cudaHostRegisterMapped));
   thr_entry->cuda_launch_lock = 0;
   CUDACHECK(cudaDeviceSynchronize());
+
+  auto* ds_thread_local = DSThreadEntry::ThreadLocal();
+  ds_thread_local->pinned_array_counter = 0;
+  for(int i = 0; i < N_PINNED_ARRAY; ++i) {
+    ds_thread_local->pinned_array[i] = CreatePinnedArray(DLDataType({kDLInt, 64, 1}), THREAD_LOCAL_PINNED_ARRAY_SIZE);
+  }
 });
 
 DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetQueueSize")

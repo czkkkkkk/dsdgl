@@ -153,5 +153,20 @@ IdArray CreateShmArray(IdArray arr, const std::string& shm_name) {
   return IdArray::FromDLPack(&managed_tensor);
 }
 
+IdArray CreatePinnedArray(DLDataType dtype, size_t size) {
+  auto ret = IdArray::Empty({(signed long)size}, dtype, {kDLCPU, 0});
+  CUDACHECK(cudaHostRegister(ret.Ptr<void>(), dtype.bits / 8 * size, cudaHostRegisterMapped));
+  return ret;
+}
+
+IdArray CopyArrayToPinned(IdArray arr, cudaStream_t stream) {
+  auto* ds_thread_local = DSThreadEntry::ThreadLocal();
+  int array_id = ds_thread_local->pinned_array_counter++;
+  ds_thread_local->pinned_array_counter %= N_PINNED_ARRAY;
+  IdArray ret = ds_thread_local->pinned_array[array_id].CreateView({arr->shape[0]}, arr->dtype);
+  CUDACHECK(cudaMemcpyAsync(ret.Ptr<void>(), arr.Ptr<void>(), arr->shape[0] * arr->dtype.bits / 8, cudaMemcpyDeviceToHost, stream));
+  return ret;
+}
+
 }
 }

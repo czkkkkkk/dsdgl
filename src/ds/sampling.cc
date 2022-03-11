@@ -44,7 +44,7 @@ void Check(IdArray array, IdType limit) {
 HeteroGraphPtr CreateCOO(IdType num_vertices, IdArray seeds, int fanout, IdArray dst) {
   IdArray src;
   Replicate(seeds, &src, fanout);
-  return UnitGraph::CreateFromCOO(1, num_vertices, num_vertices, src, dst);
+  return UnitGraph::CreateFromCOO(1, num_vertices, num_vertices, dst, src);
 }
 
 void Show(IdArray array, int rank) {
