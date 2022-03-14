@@ -55,6 +55,9 @@ struct DSContext {
   bool enable_kernel_control;
   std::atomic<int> sampler_queue_size{0}, loader_queue_size{0};
 
+  // Communication control
+  bool enable_comm_control;
+
   static DSContext* Global() {
     static DSContext instance;
     return &instance;

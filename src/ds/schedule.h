@@ -50,7 +50,7 @@ public:
 
   void TryComm(int token) {
     auto* ds_context = DSContext::Global();
-    if(ds_context->world_size == 1) {
+    if(!ds_context->enable_comm_control || ds_context->world_size == 1) {
       return;
     }
     if (ds_context->rank == 0) {
@@ -62,7 +62,7 @@ public:
 
   void FinishComm() {
     auto* ds_context = DSContext::Global();
-    if(ds_context->world_size == 1) {
+    if(!ds_context->enable_comm_control || ds_context->world_size == 1) {
       return;
     }
     cur_token_.store(-1);

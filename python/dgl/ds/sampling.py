@@ -39,8 +39,9 @@ def rebalance_train_nids(train_nids, batch_size, global_nid_map):
 def sample_neighbors_uva(g, nodes, num_vertices, fanout, replace=True):
     nodes = F.to_dgl_nd(nodes)
     subgidx = _CAPI_DGLDSSampleNeighborsUVA(g._graph, nodes, fanout, replace)
-    src, dst, eid = subgidx.edges(0)
-    ret = graph((dst, src), num_nodes = num_vertices)
+    # src, dst, eid = subgidx.edges(0)
+    # ret = graph((src, dst), num_nodes = num_vertices)
+    ret = DGLHeteroGraph(subgidx)
     return ret
 
 def csr_to_global_id(g, global_nid_map):
