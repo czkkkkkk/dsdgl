@@ -23,6 +23,8 @@ if __name__ == '__main__':
     argparser.add_argument('--num_trainers_per_machine', type=int, default=1,
                            help='the number of trainers per machine. The trainer ids are stored\
                                 in the node feature \'trainer_id\'')
+    argparser.add_argument('--root', type=str, default='/data/ogb',
+                           help='data root')
     argparser.add_argument('--output', type=str, default='data',
                            help='Output path of partitioned graph.')
     args = argparser.parse_args()
@@ -31,9 +33,9 @@ if __name__ == '__main__':
     if args.dataset == 'reddit':
         g, _ = load_reddit()
     elif args.dataset == 'ogb-product':
-        g, _ = load_ogb('ogbn-products')
-    elif args.dataset == 'ogb-paper100M':
-        g, _ = load_ogb('ogbn-papers100M')
+        g, _ = load_ogb('ogbn-products', root=args.root)
+    elif args.dataset == 'ogbn-papers100M':
+        g, _ = load_ogb('ogbn-papers100M', root=args.root)
     print('load {} takes {:.3f} seconds'.format(args.dataset, time.time() - start))
     print('|V|={}, |E|={}'.format(g.number_of_nodes(), g.number_of_edges()))
     print('train: {}, valid: {}, test: {}'.format(th.sum(g.ndata['train_mask']),

@@ -71,12 +71,14 @@ class NeighborSampler(object):
             th.cuda.synchronize()
         return blocks
 
-def run(rank, args, train_label):
+def run(rank, args):
     setup(rank, args.n_ranks)
     ds.init(rank, args.n_ranks, enable_comm_control=False)
     
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
+    print('partitioned edges numbers: ', g.number_of_edges())
+    print(type(g))
 
     g = dgl.add_self_loop(g)
 
@@ -87,21 +89,22 @@ def run(rank, args, train_label):
     #exit(0)
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
     print('rank {}, # global: {}, # local: {}'.format(rank, num_vertices, n_local_nodes))
+    print('edges: ', g.number_of_edges())
     print('# in feats:', node_feats['_N/features'].shape[1])
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
     train_nid = dgl.ds.rebalance_train_nids(train_nid, args.batch_size, g.ndata[dgl.NID])
 
-    n_classes = len(th.unique(train_label[th.logical_not(th.isnan(train_label))]))
-    print('#labels:', n_classes)
 
     # print('# batch: ', train_nid.size()[0] / args.batch_size)
     th.distributed.barrier()
     #tansfer graph and train nodes to gpu
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
-    train_g = g.formats(['csr'])
+    train_g = g.reverse().formats(['csr'])
+    print('train_g type', type(train_g))
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
     train_g = train_g.to(device)
+    print('finish copy graph to device')
     global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu
     min_vids = [0] + list(gpb._max_node_ids)
@@ -141,10 +144,10 @@ def run(rank, args, train_label):
         tic = time.time()
         start_ts = time.time()
         for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
-            th.cuda.synchronize()
-            after_sampling_ts = time.time()
-            sampling_time += after_sampling_ts - start_ts
-            start_ts = time.time()
+            pass
+        th.cuda.synchronize()
+        end_ts = time.time()
+        sampling_time += end_ts - start_ts
             
         toc = time.time()
         print('Rank: ', rank, 'sampling time', sampling_time)
@@ -167,14 +170,9 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', default=10, type=int, help='Epochs')
     args = parser.parse_args()
     
-    all_labels = th.tensor([])
-    for rank in range(args.n_ranks):
-        _, node_feats, _, _, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
-        train_label = node_feats['_N/labels']
-        all_labels = th.cat((all_labels, train_label), dim=0).long()
 
     mp.spawn(run,
-          args=(args, all_labels),
+          args=(args,),
           nprocs=args.n_ranks,
           join=True)
   

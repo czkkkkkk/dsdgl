@@ -580,9 +580,12 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
                 # larger partition.
                 node_parts = F.floor_div(node_parts, num_trainers_per_machine)
             else:
+                start_ts = time.time()
                 node_parts = metis_partition_assignment(sim_g, num_parts,
                                                         balance_ntypes=balance_ntypes,
                                                         balance_edges=balance_edges)
+                end_ts = time.time()
+                print('Metis partition time:', end_ts - start_ts)
         else:
             node_parts = random_choice(num_parts, sim_g.number_of_nodes())
         parts, orig_nids, orig_eids = partition_graph_with_halo(sim_g, node_parts, num_hops,
