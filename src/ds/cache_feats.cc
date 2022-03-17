@@ -79,18 +79,26 @@ void PartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_de
   }
   auto gathered_n_nodes = coor->Gather(n_local_nodes);
   auto gathered_ids = coor->Gather(local_shared_ids);
-  auto gathered_feats = coor->Gather(local_shared_feats);
+  // FIXME currently zmq cannot support message size large than 2^32 bytes. I just build a fake features here.
+  // auto gathered_feats = coor->Gather(local_shared_feats);
+  std::vector<IdType> gathered_n_local_feats = coor->Gather((IdType)local_shared_feats.size());
   IdArray shared_feats = NullArray(feats->dtype, feats->ctx);
   std::vector<IdType> feat_pos_map;
   IdType n_shared_nodes = 0;
   if(coor->IsRoot()) {
     IdType n_nodes = 0;
+    IdType n_gathered_feats = 0;
     for(auto c: gathered_n_nodes) {
       n_nodes += c;
     }
+    for(auto c: gathered_n_local_feats) {
+      n_gathered_feats += c;
+    }
     auto flatten_ids = Flatten(gathered_ids);
     n_shared_nodes = flatten_ids.size();
-    auto flatten_feats = Flatten(gathered_feats);
+
+    auto flatten_feats = std::vector<DataType>(n_gathered_feats, 1);
+    // auto flatten_feats = Flatten(gathered_feats);
     feat_pos_map.resize(n_nodes, -1);
     for(int i = 0; i < flatten_ids.size(); ++i) {
       IdType global_nid = flatten_ids[i];

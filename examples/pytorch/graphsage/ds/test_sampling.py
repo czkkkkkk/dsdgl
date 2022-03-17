@@ -76,7 +76,10 @@ def run(rank, args):
     ds.init(rank, args.n_ranks, enable_comm_control=False)
     
     # load partitioned graph
+    start_ts = time.time()
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
+    end_ts = time.time()
+    print('loading graph time:', end_ts - start_ts)
     print('partitioned edges numbers: ', g.number_of_edges())
     print(type(g))
 
@@ -90,7 +93,7 @@ def run(rank, args):
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
     print('rank {}, # global: {}, # local: {}'.format(rank, num_vertices, n_local_nodes))
     print('edges: ', g.number_of_edges())
-    print('# in feats:', node_feats['_N/features'].shape[1])
+    # print('# in feats:', node_feats['_N/features'].shape[1])
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
     train_nid = dgl.ds.rebalance_train_nids(train_nid, args.batch_size, g.ndata[dgl.NID])
 

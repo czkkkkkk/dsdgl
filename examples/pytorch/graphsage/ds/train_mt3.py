@@ -199,6 +199,7 @@ def run(rank, args, train_label):
     # print('# batch: ', train_nid.size()[0] / args.batch_size)
     th.distributed.barrier()
     dgl.ds.cache_feats(args.feat_mode, g, node_feats['_N/features'], args.cache_ratio)
+    print('cached feats')
     #tansfer graph and train nodes to gpu
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
