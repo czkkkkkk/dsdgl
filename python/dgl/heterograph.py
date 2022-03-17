@@ -5404,10 +5404,12 @@ class DGLHeteroGraph(object):
             new_nframes.append(nframe.to(device, **kwargs))
         ret._node_frames = new_nframes
 
-        new_eframes = []
-        for eframe in self._edge_frames:
-            new_eframes.append(eframe.to(device, **kwargs))
-        ret._edge_frames = new_eframes
+        ## Skip edge id copy in the DGNN
+        # new_eframes = []
+        # for eframe in self._edge_frames:
+        #     print('copy edge frame with rows:', eframe.num_rows)
+        #     new_eframes.append(eframe.to(device, **kwargs))
+        # ret._edge_frames = new_eframes
 
         # 2. Copy misc info
         if self._batch_num_nodes is not None:

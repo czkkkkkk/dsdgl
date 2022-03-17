@@ -3,13 +3,51 @@ import numpy as np
 import torch as th
 import argparse
 import time
+import os
+import time
 
 from load_graph import load_reddit, load_ogb
+from ogb.lsc import MAG240MDataset
+
+def load_mag240m(path='/data/dgl/mag240m'):
+    '''
+    We do not process the node feature here.
+    '''
+
+    print('loading graph')
+    start = time.time()
+    (g,), _ = dgl.load_graphs(os.path.join(path, 'graph.dgl'))
+    end = time.time()
+    print('Loading graph time', end - start)
+    g = g.formats('coo')
+
+    start = time.time()
+    dataset = MAG240MDataset(root='/data/ogb/')
+    end = time.time()
+    print('Loading dataset time', end - start)
+
+    print('Loading features')
+    paper_offset = dataset.num_authors + dataset.num_institutions
+    num_nodes = paper_offset + dataset.num_papers
+    num_features = dataset.num_paper_features
+    # feats = np.memmap(args.full_feature_path, mode='r', dtype='float16', shape=(num_nodes, num_features))
+
+    train_idx = th.LongTensor(dataset.get_idx_split('train')) + paper_offset
+    val_idx = th.LongTensor(dataset.get_idx_split('valid')) + paper_offset
+    train_mask = th.zeros((g.number_of_nodes(),), dtype=th.bool)
+    train_mask[train_idx] = True
+    val_mask = th.zeros((g.number_of_nodes(),), dtype=th.bool)
+    val_mask[val_idx] = True
+    g.ndata['train_mask'] = train_mask
+    g.ndata['val_mask'] = val_mask
+    return g
+
+
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser("Partition builtin graphs")
     argparser.add_argument('--dataset', type=str, default='reddit',
-                           help='datasets: reddit, ogb-product, ogb-paper100M')
+                           help='datasets: reddit, ogb-product, ogb-paper100M, mag240m')
     argparser.add_argument('--num_parts', type=int, default=4,
                            help='number of partitions')
     argparser.add_argument('--part_method', type=str, default='metis',
@@ -23,6 +61,8 @@ if __name__ == '__main__':
     argparser.add_argument('--num_trainers_per_machine', type=int, default=1,
                            help='the number of trainers per machine. The trainer ids are stored\
                                 in the node feature \'trainer_id\'')
+    argparser.add_argument('--root', type=str, default='/data/ogb',
+                           help='data root')
     argparser.add_argument('--output', type=str, default='data',
                            help='Output path of partitioned graph.')
     args = argparser.parse_args()
@@ -31,14 +71,16 @@ if __name__ == '__main__':
     if args.dataset == 'reddit':
         g, _ = load_reddit()
     elif args.dataset == 'ogb-product':
-        g, _ = load_ogb('ogbn-products')
-    elif args.dataset == 'ogb-paper100M':
-        g, _ = load_ogb('ogbn-papers100M')
+        g, _ = load_ogb('ogbn-products', root=args.root)
+    elif args.dataset == 'ogbn-papers100M':
+        g, _ = load_ogb('ogbn-papers100M', root=args.root)
+    elif args.dataset == 'mag240m':
+        g = load_mag240m()
+
     print('load {} takes {:.3f} seconds'.format(args.dataset, time.time() - start))
     print('|V|={}, |E|={}'.format(g.number_of_nodes(), g.number_of_edges()))
-    print('train: {}, valid: {}, test: {}'.format(th.sum(g.ndata['train_mask']),
-                                                  th.sum(g.ndata['val_mask']),
-                                                  th.sum(g.ndata['test_mask'])))
+    print('train: {}, valid: {}'.format(th.sum(g.ndata['train_mask']),
+                                                  th.sum(g.ndata['val_mask'])))
     if args.balance_train:
         balance_ntypes = g.ndata['train_mask']
     else:

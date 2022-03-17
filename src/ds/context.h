@@ -7,6 +7,7 @@
 #include <dgl/array.h>
 #include <memory>
 #include <atomic>
+#include <dmlc/thread_local.h>
 
 #include "coordinator.h"
 #include "./comm/comm_info.h"
@@ -24,6 +25,15 @@ enum FeatMode { kFeatModeAllCache, kFeatModePartitionCache, kFeatModeReplicateCa
 
 #define SAMPLER_ROLE 0
 #define LOADER_ROLE 1
+
+#define THREAD_LOCAL_PINNED_ARRAY_SIZE 256
+#define N_PINNED_ARRAY 3
+
+struct DSThreadEntry {
+  IdArray pinned_array[N_PINNED_ARRAY];
+  int pinned_array_counter;
+  static DSThreadEntry* ThreadLocal();
+};
 
 struct DSContext {
   bool initialized = false;
@@ -45,6 +55,8 @@ struct DSContext {
   bool enable_kernel_control;
   std::atomic<int> sampler_queue_size{0}, loader_queue_size{0};
 
+  // Communication control
+  bool enable_comm_control;
 
   static DSContext* Global() {
     static DSContext instance;

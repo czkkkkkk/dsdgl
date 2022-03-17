@@ -348,9 +348,6 @@ void NCCLAllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer,
   int type_bytes = sizeof(T);
   IdType* send_offset_ptr = send_offset.Ptr<IdType>();
   IdType* recv_offset_ptr = recv_offset.Ptr<IdType>();
-  CUDACHECK(cudaMemcpyAsync(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
-                       send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
-                       (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice, data_copy_stream));
   ncclGroupStart();
   for(int r = 0; r < world_size; ++r) {
     if(r != rank) {
@@ -363,6 +360,9 @@ void NCCLAllToAll(IdArray send_buffer, IdArray send_offset, IdArray recv_buffer,
     }
   }
   ncclGroupEnd();
+  CUDACHECK(cudaMemcpyAsync(recv_buffer_ptr + recv_offset_ptr[rank] * expand_size, 
+                       send_buffer_ptr + send_offset_ptr[rank] * expand_size, 
+                       (send_offset_ptr[rank + 1] - send_offset_ptr[rank]) * expand_size * type_bytes, cudaMemcpyDeviceToDevice, data_copy_stream));
   CUDACHECK(cudaStreamSynchronize(data_copy_stream));
 }
 
@@ -419,19 +419,21 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
   } else {
     // NCCL
     CHECK(send_offset->dtype.bits == 64);
+    auto send_sizes = Diff(send_offset);
     auto stream = CUDAThreadEntry::ThreadLocal()->stream;
     auto data_copy_stream = CUDAThreadEntry::ThreadLocal()->data_copy_stream;
     auto dgl_context = input->ctx;
     auto *ds_context = DSContext::Global();
     auto host_dgl_context = DLContext{kDLCPU, 0};
-    auto send_sizes = Diff(send_offset);
     int comm_token = CUDAThreadEntry::ThreadLocal()->thread_id;
     int thread_id = CUDAThreadEntry::ThreadLocal()->thread_id;
     ncclComm_t nccl_comm = ds_context->nccl_comm[thread_id];
+    auto* ds_thread_local = DSThreadEntry::ThreadLocal();
 
     // NOTE: to guarantee the send_offset is ready
     CUDACHECK(cudaStreamSynchronize(stream));
-    auto host_send_offset = send_offset.CopyTo(host_dgl_context, data_copy_stream);
+    // auto host_send_offset = send_offset.CopyTo(host_dgl_context, data_copy_stream);
+    auto host_send_offset = CopyArrayToPinned(send_offset, data_copy_stream);
     if(IsNullArray(recv_offset)) {
       IdArray recv_sizes = IdArray::Empty({world_size}, send_offset->dtype, dgl_context);
       IdArray range_seq = Range(0, world_size + 1, 64, host_dgl_context);
@@ -442,7 +444,8 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
       recv_offset = CumSum(recv_sizes, true);
     }
 
-    IdArray host_recv_offset = recv_offset.CopyTo(host_dgl_context, stream);
+    //IdArray host_recv_offset = recv_offset.CopyTo(host_dgl_context, stream);
+    auto host_recv_offset = CopyArrayToPinned(recv_offset, stream);
     CUDACHECK(cudaStreamSynchronize(data_copy_stream));
     CUDACHECK(cudaStreamSynchronize(stream));
     auto* host_recv_offset_ptr = host_recv_offset.Ptr<IdType>();

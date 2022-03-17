@@ -26,6 +26,8 @@ ei_writes = dataset.edge_index('author', 'writes', 'paper')
 ei_cites = dataset.edge_index('paper', 'paper')
 ei_affiliated = dataset.edge_index('author', 'institution')
 
+print('got edges')
+
 # We sort the nodes starting with the papers, then the authors, then the institutions.
 author_offset = 0
 inst_offset = author_offset + dataset.num_authors
@@ -38,12 +40,17 @@ g = dgl.heterograph({
     ('institution', 'affiliate', 'author'): (ei_affiliated[1], ei_affiliated[0]),
     ('paper', 'cite', 'paper'): (np.concatenate([ei_cites[0], ei_cites[1]]), np.concatenate([ei_cites[1], ei_cites[0]]))
     })
+print('built graph')
 
 paper_feat = dataset.paper_feat
+print('loaded paper_feat')
 author_feat = np.memmap(args.author_output_path, mode='w+', dtype='float16', shape=(dataset.num_authors, dataset.num_paper_features))
+print('loaded author feat')
 inst_feat = np.memmap(args.inst_output_path, mode='w+', dtype='float16', shape=(dataset.num_institutions, dataset.num_paper_features))
+print('loaded inst_feat')
 
 # Iteratively process author features along the feature dimension.
+''' DS: skip feature computation
 BLOCK_COLS = 16
 with tqdm.trange(0, dataset.num_paper_features, BLOCK_COLS) as tq:
     for start in tq:
@@ -62,6 +69,7 @@ with tqdm.trange(0, dataset.num_paper_features, BLOCK_COLS) as tq:
         del g.nodes['paper'].data['x']
         del g.nodes['author'].data['x']
         del g.nodes['institution'].data['x']
+'''
 author_feat.flush()
 inst_feat.flush()
 

@@ -130,6 +130,7 @@ HaloHeteroSubgraph GetSubgraphWithHalo(std::shared_ptr<HeteroGraph> hg,
     }
   }
 
+  /* DGNN: Remove out edges
   if (num_hops > 0) {
     EdgeArray out_edges = hg->OutEdges(0, nodes);
     auto src = out_edges.src;
@@ -155,6 +156,7 @@ HaloHeteroSubgraph GetSubgraphWithHalo(std::shared_ptr<HeteroGraph> hg,
       }
     }
   }
+  */
 
   // We assign new Ids to the nodes in the subgraph. We ensure that the HALO
   // nodes are behind the input nodes.

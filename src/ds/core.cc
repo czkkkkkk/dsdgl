@@ -55,7 +55,7 @@ void InitNcclComm(ncclComm_t *nccl_comm, DSContext *ds_context, int world_size, 
   ncclCommInitRank(nccl_comm, world_size, nccl_id, rank);
 }
 
-void Initialize(int rank, int world_size, int thread_num, bool enable_kernel_control) {
+void Initialize(int rank, int world_size, int thread_num, bool enable_kernel_control, bool enable_comm_control) {
   LOG(INFO) << "Rank [" << rank << "] initializing DS context";
   auto* ds_context = DSContext::Global();
   ds_context->initialized = true;
@@ -71,6 +71,8 @@ void Initialize(int rank, int world_size, int thread_num, bool enable_kernel_con
 
   ds_context->enable_kernel_control = enable_kernel_control;
   LOG(INFO) << "Enable kernel control? " << enable_kernel_control;
+
+  ds_context->enable_comm_control = enable_comm_control;
 
   int use_nccl = GetEnvParam("USE_NCCL", 0);
   if (!use_nccl) {
@@ -105,7 +107,8 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")
   int world_size = args[1];
   int thread_num = args[2];
   bool enable_kernel_control = args[3];
-  Initialize(rank, world_size, thread_num, enable_kernel_control);
+  bool enable_comm_control = args[4];
+  Initialize(rank, world_size, thread_num, enable_kernel_control, enable_comm_control);
 });
 
 // Set dgl thread local stream
@@ -127,6 +130,12 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetStream")
   CUDACHECK(cudaHostRegister((void*)&(thr_entry->cuda_launch_lock), sizeof(int), cudaHostRegisterMapped));
   thr_entry->cuda_launch_lock = 0;
   CUDACHECK(cudaDeviceSynchronize());
+
+  auto* ds_thread_local = DSThreadEntry::ThreadLocal();
+  ds_thread_local->pinned_array_counter = 0;
+  for(int i = 0; i < N_PINNED_ARRAY; ++i) {
+    ds_thread_local->pinned_array[i] = CreatePinnedArray(DLDataType({kDLInt, 64, 1}), THREAD_LOCAL_PINNED_ARRAY_SIZE);
+  }
 });
 
 DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetQueueSize")

@@ -116,9 +116,13 @@ struct CSRMatrix {
   inline CSRMatrix CopyTo(const DLContext& ctx) const {
     if (ctx == indptr->ctx)
       return *this;
+    // return CSRMatrix(num_rows, num_cols,
+    //                  indptr.CopyTo(ctx), indices.CopyTo(ctx),
+    //                  aten::IsNullArray(data)? data : data.CopyTo(ctx),
+    //                  sorted);
     return CSRMatrix(num_rows, num_cols,
                      indptr.CopyTo(ctx), indices.CopyTo(ctx),
-                     aten::IsNullArray(data)? data : data.CopyTo(ctx),
+                     NullArray(data->dtype, ctx),
                      sorted);
   }
 };
