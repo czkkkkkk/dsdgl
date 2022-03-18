@@ -180,8 +180,8 @@ def run(rank, args, train_label):
     th.set_num_interop_threads(1)
     print('num threads: {}, iterop threads: {}'.format(th.get_num_threads(), th.get_num_interop_threads()))
     setup(rank, args.n_ranks)
-    sampler_number = 3
-    loader_number = 3
+    sampler_number = 1
+    loader_number = 1
     ds.init(rank, args.n_ranks, thread_num=sampler_number + loader_number, enable_kernel_control=False)
     
     # load partitioned graph
@@ -237,20 +237,21 @@ def run(rank, args, train_label):
     dgl.ds.set_device_thread_local_stream(device, s)
 
     # Define model and optimizer
-    model = SAGE(in_feats, args.num_hidden, n_classes, len(fanout), th.relu, args.dropout)
-    model = model.to(device)
-    if args.n_ranks > 1:
-      model = DistributedDataParallel(model, device_ids=[rank], output_device=rank)
-    loss_fcn = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    with th.cuda.stream(s):
+      model = SAGE(in_feats, args.num_hidden, n_classes, len(fanout), th.relu, args.dropout)
+      model = model.to(device)
+      if args.n_ranks > 1:
+        model = DistributedDataParallel(model, device_ids=[rank], output_device=rank)
+      loss_fcn = nn.CrossEntropyLoss()
+      optimizer = optim.Adam(model.parameters(), lr=args.lr)
     
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
     skip_epoch = 5
-    sample_data_buffer = MPMCQueue(10, sampler_number, loader_number)
+    sample_data_buffer = MPMCQueue(5, sampler_number, loader_number)
     # sample_data_buffer = MPMCQueue_simple(10, sampler_number, loader_number)
-    subtensor_data_buffer = MPMCQueue(10, loader_number, 1)
+    subtensor_data_buffer = MPMCQueue(5, loader_number, 1)
     # subtensor_data_buffer = PCQueue(10)
     my_dataloader = ParallelNodeDataLoader(dataloader)
 
@@ -308,16 +309,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='GCN')
     register_data_args(parser)
     parser.add_argument('--graph_name', default='test', type=str, help='graph name')
-    parser.add_argument('--part_config', default='./reddit-data-4/reddit.json', type=str, help='The path to the partition config file')
+    parser.add_argument('--part_config', default='/data/ds/metis_ogbn-papers100M4/ogbn-papers100M.json', type=str, help='The path to the partition config file')
     parser.add_argument('--n_ranks', default=4, type=int, help='Number of ranks')
     parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
-    parser.add_argument('--num_hidden', default=16, type=int, help='Hidden size')
+    parser.add_argument('--num_hidden', default=256, type=int, help='Hidden size')
     parser.add_argument('--dropout', type=float, default=0.5)
-    parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
+    parser.add_argument('--fan_out', default="5, 10, 15", type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
     parser.add_argument('--lr', type=float, default=0.003)
-    parser.add_argument('--feat_mode', default='AllCache', type=str, help='Feature cache mode. (AllCache, PartitionCache, ReplicateCache)')
-    parser.add_argument('--cache_ratio', default=100, type=int, help='Percentages of features on GPUs')
+    parser.add_argument('--feat_mode', default='PartitionCache', type=str, help='Feature cache mode. (AllCache, PartitionCache, ReplicateCache)')
+    parser.add_argument('--cache_ratio', default=10, type=int, help='Percentages of features on GPUs')
     args = parser.parse_args()
     
     all_labels = th.tensor([])
