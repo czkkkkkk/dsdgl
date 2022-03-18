@@ -70,6 +70,8 @@ void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, in
  */
 void IndexSelect(IdType size, IdArray index, IdArray input_table, IdArray output_table, int feat_dim, IdArray input_mapping = NullArray(), IdArray output_mapping = NullArray(), cudaStream_t stream = 0);
 
+void IndexSelectUVA(IdType size, IdArray index, IdArray input_table, IdArray output_table, int feat_dim, IdArray input_mapping = NullArray(), IdArray output_mapping = NullArray(), cudaStream_t stream = 0);
+
 std::tuple<IdArray, IdArray, IdArray> GetFeatTypePartIds(IdArray nodes, IdArray feat_pos_map);
 
 }

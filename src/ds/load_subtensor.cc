@@ -102,7 +102,7 @@ NDArray LocalSubtensorsPartitionCacheSomeFeats(IdArray input_nodes, IdArray min_
   IndexSelect(features_recv->shape[0] / feat_dim, NullArray(), features_recv, ret_feats, feat_dim, NullArray(), dev_index);
 
   // 3. Load host features in parallel
-  IndexSelect(host_sorted_nodes->shape[0], host_sorted_nodes, shared_feats, ret_feats, feat_dim, NullArray(), host_index, data_copy_stream);
+  IndexSelectUVA(host_sorted_nodes->shape[0], host_sorted_nodes, shared_feats, ret_feats, feat_dim, NullArray(), host_index, data_copy_stream);
   CUDACHECK(cudaStreamSynchronize(data_copy_stream));
   return ret_feats;
 }
