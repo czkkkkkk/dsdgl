@@ -144,5 +144,19 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetQueueSize")
   KernelController::SetQueueSize(queue_size);
 });
 
+DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSAllgatherTrainLabels")
+.set_body([] (DGLArgs args, DGLRetValue *rv) {
+  auto* coor = DSContext::Global()->coordinator.get();
+  IdArray labels = args[0];
+  auto labels_vec = labels.ToVector<int64_t>();
+  auto gathered_labels = coor->Gather(labels_vec);
+  std::vector<int64_t> flatten_labels;
+  if(coor->IsRoot()) {
+    flatten_labels = Flatten(gathered_labels);
+  }
+  coor->Broadcast(flatten_labels);
+  *rv = IdArray::FromVector(flatten_labels, labels->ctx);
+});
+
 }
 }

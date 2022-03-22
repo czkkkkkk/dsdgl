@@ -22,6 +22,7 @@ from model import SAGE
 import threading
 from threading import Thread
 from queue import Queue
+import os, psutil
 #from dgl.ds.graph_partition_book import *
 
 def setup(rank, world_size):
@@ -113,26 +114,36 @@ class Sampler(Thread):
     with th.cuda.stream(s):
       for i in range(self.num_epochs):
         self.pc_queue.get_lock()
+        start_ts = time.time()
+        sampling_time = 0
+        loading_time = 0
         for step, (input_nodes, seeds, blocks) in enumerate(self.dataloader):
-          # batch_inputs = th.ones([input_nodes.shape[0], self.features.shape[1]], dtype=self.features.dtype, device=self.rank)
-          # batch_labels = th.ones([seeds.shape[0]], dtype=self.labels.dtype, device=self.rank)
-          # batch_inputs, batch_labels = dgl.ds.load_subtensor(self.features, self.labels, input_nodes, seeds, self.min_vids)
+          s.synchronize()
+          sample_ts = time.time()
           batch_inputs, batch_labels = dgl.ds.load_subtensor(self.labels, input_nodes, seeds, self.min_vids, self.feat_dim)
           s.synchronize()
+          load_ts = time.time()
           self.pc_queue.put((batch_inputs, batch_labels, blocks))
           self.pc_queue.get_lock()
+          sampling_time += sample_ts - start_ts
+          loading_time += load_ts - sample_ts
+          start_ts = time.time()
+        print('[Epoch {}], rank {}, sample time {}, load time {}'.format(i, self.rank, sampling_time, loading_time))
         self.pc_queue.stop_produce(1)
 
 def show_thread():
   t = threading.currentThread()
   print('python thread id: {}, thread name: {}'.format(t.ident, t.getName()))
 
-def run(rank, args, train_label):
+def run(rank, args):
+    process = psutil.Process(os.getpid())
     setup(rank, args.n_ranks)
     ds.init(rank, args.n_ranks)
     
+    print('Rank {}, Host memory usage before load partition: {} GB'.format(rank, process.memory_info().rss / 1e9))
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
+    print('Rank {}, Host memory usage after load partition: {} GB'.format(rank, process.memory_info().rss / 1e9))
 
     g = dgl.add_self_loop(g)
 
@@ -141,25 +152,31 @@ def run(rank, args, train_label):
     #test_sampling(num_vertices, g, rank)
     #time.sleep(2)
     #exit(0)
+    in_feats = node_feats['_N/features'].shape[1] 
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
     print('rank {}, # global: {}, # local: {}'.format(rank, num_vertices, n_local_nodes))
     print('# in feats:', node_feats['_N/features'].shape[1])
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
     train_nid = dgl.ds.rebalance_train_nids(train_nid, args.batch_size, g.ndata[dgl.NID])
 
+    train_label = dgl.ds.allgather_train_labels(node_feats['_N/labels'])
     n_classes = len(th.unique(train_label[th.logical_not(th.isnan(train_label))]))
     print('#labels:', n_classes)
 
     # print('# batch: ', train_nid.size()[0] / args.batch_size)
     th.distributed.barrier()
     dgl.ds.cache_feats(args.feat_mode, g, node_feats['_N/features'], args.cache_ratio)
+    del node_feats['_N/features']
+    print('Rank {}, Host memory usage after cache feats: {} GB'.format(rank, process.memory_info().rss / 1e9))
     #tansfer graph and train nodes to gpu
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
+    print('Rank {}, Host memory usage before create format: {} GB'.format(rank, process.memory_info().rss / 1e9))
     train_g = g.formats(['csr'])
+    g = None
+    print('Rank {}, Host memory usage after create format: {} GB'.format(rank, process.memory_info().rss / 1e9))
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
     train_g = train_g.to(device)
-    in_feats = node_feats['_N/features'].shape[1] 
     train_label = train_label.to(device)
     global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu
@@ -202,7 +219,6 @@ def run(rank, args, train_label):
     sample_worker = Sampler(dataloader, train_label, min_vids, data_buffer, in_feats, rank, args.num_epochs)
 
     s = th.cuda.Stream(device=device)
-    print('cuda stream', s)
     dgl.ds.set_device_thread_local_stream(device, s)
 
     sample_worker.start()
@@ -241,7 +257,7 @@ def run(rank, args, train_label):
         print('training time:', training_time)
         print("rank:", rank, toc - tic)
     sample_worker.join()
-    print("rank:", rank, "sampling time:", total/(args.num_epochs - skip_epoch))
+    print("rank:", rank, "e2e time:", total/(args.num_epochs - skip_epoch))
     cleanup()
   
 
@@ -262,14 +278,9 @@ if __name__ == '__main__':
     parser.add_argument('--cache_ratio', default=100, type=int, help='Percentages of features on GPUs')
     args = parser.parse_args()
     
-    all_labels = th.tensor([])
-    for rank in range(args.n_ranks):
-        _, node_feats, _, _, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
-        train_label = node_feats['_N/labels']
-        all_labels = th.cat((all_labels, train_label), dim=0).long()
 
     mp.spawn(run,
-          args=(args, all_labels),
+          args=(args, ),
           nprocs=args.n_ranks,
           join=True)
   

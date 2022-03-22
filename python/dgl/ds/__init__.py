@@ -6,6 +6,7 @@ from .sampling import *
 from .pin_graph import pin_graph, test_array
 from .cache_feats import cache_feats
 from .load_subtensor import load_subtensor
+from .. import backend as F
 
 class DummyOp(th.autograd.Function):
     @staticmethod
@@ -40,5 +41,12 @@ def set_thread_local_stream(s, thread_id=0, role=0):
 
 def set_queue_size(size):
     _CAPI_DGLDSSetQueueSize(size)
+
+def allgather_train_labels(labels):
+    labels = F.to_dgl_nd(labels.long())
+    labels = _CAPI_DGLDSAllgatherTrainLabels(labels)
+    return F.from_dgl_nd(labels)
+
+
 
 _init_api("dgl.ds")

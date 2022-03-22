@@ -121,6 +121,17 @@ std::string VecToString(const std::vector<T>& vec) {
   return ret;
 }
 
+template<typename T>
+std::vector<T> Flatten(const std::vector<std::vector<T>>& input) {
+  std::vector<T> output;
+  for(const auto& vec: input) {
+    for(auto v: vec) {
+      output.push_back(v);
+    }
+  }
+  return output;
+}
+
 template <typename T>
 T GetEnvParam(const std::string &key, T default_value) {
   auto new_key = std::string("DGL_DS_") + key;
