@@ -190,15 +190,60 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
   }
 }
 
-void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges) {
+template <int BLOCK_WARPS, int TILE_SIZE>
+__global__ void _CSRRowWiseSampleReplaceKernelV2(
+    const uint64_t rand_seed,
+    int num_picks, 
+    IdType num_rows, 
+    IdType *in_rows,
+    IdType *in_ptr, 
+    IdType *in_index,
+    IdType *uva_in_ptr,
+    IdType *uva_in_index,
+    IdType n_cached_nodes,
+    IdType n_uva_nodes,
+    IdType *out_ptr, 
+    IdType *out_index) {
+  assert(blockDim.x == WARP_SIZE);
+
+  int64_t out_row = blockIdx.x*TILE_SIZE+threadIdx.y;
+  const int64_t last_row = min(static_cast<int64_t>(blockIdx.x+1)*TILE_SIZE, num_rows);
+
+  curandState rng;
+  curand_init(rand_seed*gridDim.x+blockIdx.x, threadIdx.y*WARP_SIZE+threadIdx.x, 0, &rng);
+
+  while (out_row < last_row) {
+    const int64_t row = in_rows[out_row];
+    bool on_dev = row < n_cached_nodes;
+    const int64_t in_row_start = on_dev? in_ptr[row]: uva_in_ptr[row-n_cached_nodes];
+    const int64_t out_row_start = out_ptr[out_row];
+    const int64_t deg = (on_dev? in_ptr[row+1]: uva_in_ptr[row+1-n_cached_nodes]) - in_row_start;
+    const int64_t* index = (on_dev? in_index: uva_in_index) + in_row_start;
+
+    if (deg > 0) {
+      // each thread then blindly copies in rows only if deg > 0.
+      for (int idx = threadIdx.x; idx < num_picks; idx += blockDim.x) {
+        const int64_t edge = curand(&rng) % deg;
+        const int64_t out_idx = out_row_start+idx;
+        out_index[out_idx] = index[edge];
+      }
+    }
+    out_row += BLOCK_WARPS;
+  }
+}
+
+IdArray SampleNeighbors(IdArray frontier, int fanout) {
+  auto* ds_context = DSContext::Global();
+  auto dev_csr = ds_context->dev_graph;
+  auto uva_csr = ds_context->uva_graph;
+  IdType n_cached_nodes = ds_context->n_cached_nodes;
+  IdType n_uva_nodes = ds_context->n_uva_nodes;
+
   auto dgl_ctx = frontier->ctx;
   int n_frontier = frontier->shape[0];
   IdArray edge_offset = Full<int64_t>(fanout, n_frontier, dgl_ctx);
   edge_offset = CumSum(edge_offset, true);
-  *neighbors = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
-  // *edges = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
-  // *neighbors = MemoryManager::Global()->Empty("NEIGHBORS", {n_frontier * fanout}, frontier->dtype, dgl_ctx);
-  // *edges = MemoryManager::Global()->Empty("EDGES", {n_frontier * fanout}, frontier->dtype, dgl_ctx);
+  auto neighbors = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
 
   constexpr int BLOCK_WARPS = 128/WARP_SIZE;
   constexpr int TILE_SIZE = BLOCK_WARPS*16;
@@ -208,12 +253,13 @@ void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* n
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   const uint64_t random_seed = 7777777;
   if(grid.x > 0) {
-    _CSRRowWiseSampleReplaceKernel<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
-      random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), csr_mat.indptr.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(),
-      edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>()
+    _CSRRowWiseSampleReplaceKernelV2<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
+      random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), dev_csr.indptr.Ptr<IdType>(), dev_csr.indices.Ptr<IdType>(), uva_csr.indptr.Ptr<IdType>(), uva_csr.indices.Ptr<IdType>(), n_cached_nodes, n_uva_nodes,
+      edge_offset.Ptr<IdType>(), neighbors.Ptr<IdType>()
     );
   }
   // CUDACHECK(cudaDeviceSynchronize());
+  return neighbors;
 }
 
 void SampleNeighborsV2(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges) {

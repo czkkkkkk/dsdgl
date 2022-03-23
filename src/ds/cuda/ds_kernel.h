@@ -38,7 +38,7 @@ IdArray Partition(IdArray seeds, IdArray min_vids);
 
 void Cluster(int rank, IdArray seeds, IdArray min_vids, int world_size, IdArray* send_sizes, IdArray* send_offset);
 
-void SampleNeighbors(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges);
+IdArray SampleNeighbors(IdArray frontier, int fanout);
 
 void SampleNeighborsV2(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges);
 

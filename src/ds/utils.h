@@ -173,6 +173,15 @@ IdArray CreatePinnedArray(DLDataType dtype, size_t size);
 
 IdArray CopyArrayToPinned(IdArray arr, cudaStream_t stream);
 
+static void Register(IdArray array) {
+  uint64_t *data = array.Ptr<uint64_t>();
+  uint64_t size = array->shape[0];
+  assert(data != nullptr);
+  if(size > 0) {
+    CUDACHECK(cudaHostRegister((void*)data, sizeof(uint64_t) * size, cudaHostRegisterMapped));
+  }
+}
+
 }
 }
 

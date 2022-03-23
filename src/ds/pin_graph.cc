@@ -25,15 +25,6 @@ using namespace dgl::aten;
 
 namespace ds {
 
-void Register(IdArray array) {
-  uint64_t *data = array.Ptr<uint64_t>();
-  uint64_t size = array->shape[0];
-  assert(data != nullptr);
-  assert(size > 0);
-  printf("graph size: %lu\n", size);
-  CUDACHECK(cudaHostRegister((void*)data, sizeof(uint64_t) * size, cudaHostRegisterMapped));
-  CUDACHECK(cudaDeviceSynchronize());
-}
 
 DGL_REGISTER_GLOBAL("ds.pin_graph._CAPI_DGLDSPinGraph")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {

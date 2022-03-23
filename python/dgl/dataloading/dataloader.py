@@ -460,9 +460,11 @@ class NodeCollator(Collator):
     def __init__(self, g, nids, block_sampler):
         self.g = g
         self._is_distributed = isinstance(g, DistGraph)
+        """DS
         if not isinstance(nids, Mapping):
             assert len(g.ntypes) == 1, \
                 "nids should be a dict of node type and ids for graph with multiple node types"
+        """
         self.block_sampler = block_sampler
 
         if isinstance(nids, Mapping):

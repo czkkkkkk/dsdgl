@@ -217,11 +217,12 @@ def run(rank, args):
     train_g = g.formats(['csr'])
     g = None
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
-    train_g = train_g.to(device)
+    global_nid_map = train_g.ndata[dgl.NID].to(device)
+    dgl.ds.cache_graph(train_g, args.graph_cache_ratio)
+    train_g = None
     print('Rank {}, pytorch memory usage after move train_g to device : {} GB'.format(rank, th.cuda.memory_allocated(rank) / 1e9))
     in_feats = node_feats['_N/features'].shape[1] 
     train_label = train_label.to(device)
-    global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu
     min_vids = [0] + list(gpb._max_node_ids)
     min_vids = F.tensor(min_vids, dtype=F.int64).to(device)
@@ -335,6 +336,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.003)
     parser.add_argument('--feat_mode', default='PartitionCache', type=str, help='Feature cache mode. (AllCache, PartitionCache, ReplicateCache)')
     parser.add_argument('--cache_ratio', default=10, type=int, help='Percentages of features on GPUs')
+    parser.add_argument('--graph_cache_ratio', default=100, type=int, help='Ratio of edges cached in the GPU')
     args = parser.parse_args()
     
     mp.spawn(run,

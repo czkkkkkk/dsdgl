@@ -22,14 +22,6 @@ using namespace dgl::aten;
 
 namespace ds {
 
-void Sample(IdArray frontier, const HeteroGraphPtr hg, int fanout, bool replace, IdArray* neighbors, IdArray* edges) {
-  assert(hg->NumEdgeTypes() == 1);
-  dgl_type_t etype = 0;
-  CSRMatrix csr_mat = hg->GetCSRMatrix(etype);
-  SampleNeighbors(frontier, csr_mat, fanout, neighbors, edges);
-  // SampleNeighborsV2(frontier, csr_mat, fanout, neighbors, edges);
-}
-
 void Check(IdArray array, IdType limit) {
   int size = array->shape[0];
   IdType *data = array.Ptr<IdType>();
@@ -59,7 +51,7 @@ void Show(IdArray array, int rank) {
 
 DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
-  HeteroGraphRef hg = args[0];
+  // HeteroGraphRef hg = args[0];
   IdType num_vertices = args[1];
   IdArray min_vids = args[2];
   IdArray min_eids = args[3];
@@ -71,6 +63,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   IdArray global_nid_map = args[9];
   const bool is_local = args[10];
   auto* context = DSContext::Global();
+  CHECK(context->graph_loaded);
 
   int n_seeds = seeds->shape[0];
   int rank = context->rank;
@@ -97,8 +90,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   std::tie(frontier, recv_offset) = Alltoall(seeds, send_offset, 1, rank, world_size);
 
   ConvertGidToLid(frontier, min_vids, rank);
-  IdArray neighbors, edges;
-  Sample(frontier, hg.sptr(), fanout, replace, &neighbors, &edges);
+  auto neighbors = SampleNeighbors(frontier, fanout);
   
   IdArray reshuffled_neighbors, reshuffle_recv_offset;
   std::tie(reshuffled_neighbors, reshuffle_recv_offset) = Alltoall(neighbors, recv_offset, fanout, rank, world_size, send_offset);
@@ -112,7 +104,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
 IdArray ToGlobal(IdArray nids, IdArray global_nid_map) {
   CHECK(nids->ctx.device_type == kDLCPU);
   CHECK(global_nid_map->ctx.device_type == kDLCPU);
-  int length = nids->shape[0];
+  IdType length = nids->shape[0];
   IdArray ret = IdArray::Empty({length}, nids->dtype, nids->ctx);
   IdType* ret_ptr = ret.Ptr<IdType>();
   IdType* nids_ptr = nids.Ptr<IdType>();
