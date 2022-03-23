@@ -25,6 +25,8 @@ from queue import Queue
 from pc_queue import *
 from torch.nn.parallel import DistributedDataParallel
 import sys
+import os, psutil
+from pynvml import *
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -173,19 +175,24 @@ class SubtensorLoader(Thread):
         SubtensorLoader.sem_.acquire()
         self.next_epoch()
     
-def run(rank, args, train_label):
+def print_nvidia_mem(prefix):
+  h = nvmlDeviceGetHandleByIndex(0)
+  info = nvmlDeviceGetMemoryInfo(h)
+  print('{}, NVIDIA free {} G, used {} G'.format(prefix, info.free / 1e9, info.used / 1e9))
+
+def run(rank, args):
     print('Start rank', rank, 'with args:', args)
     th.cuda.set_device(rank)
-    th.set_num_threads(1)
-    th.set_num_interop_threads(1)
-    print('num threads: {}, iterop threads: {}'.format(th.get_num_threads(), th.get_num_interop_threads()))
     setup(rank, args.n_ranks)
     sampler_number = 1
     loader_number = 1
+    nvmlInit()
     ds.init(rank, args.n_ranks, thread_num=sampler_number + loader_number, enable_kernel_control=False)
     
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
+    process = psutil.Process(os.getpid())
+    print('Host memory usage after load partition {} GB'.format(process.memory_info().rss / 1e9))
     g = dgl.add_self_loop(g)
     num_vertices = gpb._max_node_ids[-1]
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
@@ -193,19 +200,25 @@ def run(rank, args, train_label):
     print('# in feats:', node_feats['_N/features'].shape[1])
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
     train_nid = dgl.ds.rebalance_train_nids(train_nid, args.batch_size, g.ndata[dgl.NID])
+    train_label = dgl.ds.allgather_train_labels(node_feats['_N/labels'])
     n_classes = len(th.unique(train_label[th.logical_not(th.isnan(train_label))]))
     print('#labels:', n_classes)
+    print('Rank {}, subgraph nodes {} B, subgraph edges {} B'.format(rank, g.number_of_nodes() / 1e9, g.number_of_edges() / 1e9))
 
     # print('# batch: ', train_nid.size()[0] / args.batch_size)
     th.distributed.barrier()
+    print('Rank {}, Host memory usage before cache feats: {} GB'.format(rank, process.memory_info().rss / 1e9))
     dgl.ds.cache_feats(args.feat_mode, g, node_feats['_N/features'], args.cache_ratio)
-    print('cached feats')
+    print('Rank {}, Host memory usage after cache feats: {} GB'.format(rank, process.memory_info().rss / 1e9))
     #tansfer graph and train nodes to gpu
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
+    # train_g = g.reverse().formats(['csr'])
     train_g = g.formats(['csr'])
+    g = None
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
     train_g = train_g.to(device)
+    print('Rank {}, pytorch memory usage after move train_g to device : {} GB'.format(rank, th.cuda.memory_allocated(rank) / 1e9))
     in_feats = node_feats['_N/features'].shape[1] 
     train_label = train_label.to(device)
     global_nid_map = train_g.ndata[dgl.NID]
@@ -245,13 +258,16 @@ def run(rank, args, train_label):
       loss_fcn = nn.CrossEntropyLoss()
       optimizer = optim.Adam(model.parameters(), lr=args.lr)
     
+    print('GPU memory usage before train: {} GB'.format(th.cuda.memory_allocated(rank) / 1e9))
+    print_nvidia_mem('Before train')
+    
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
     skip_epoch = 5
-    sample_data_buffer = MPMCQueue(5, sampler_number, loader_number)
+    sample_data_buffer = MPMCQueue(1, sampler_number, loader_number)
     # sample_data_buffer = MPMCQueue_simple(10, sampler_number, loader_number)
-    subtensor_data_buffer = MPMCQueue(5, loader_number, 1)
+    subtensor_data_buffer = MPMCQueue(1, loader_number, 1)
     # subtensor_data_buffer = PCQueue(10)
     my_dataloader = ParallelNodeDataLoader(dataloader)
 
@@ -301,8 +317,8 @@ def run(rank, args, train_label):
       sample_workers[i].join()
     for i in range(loader_number):
       load_workers[i].join()
-    print("rank:", rank, "end2end time:", total/(args.num_epochs - skip_epoch))
-    print("train:", rank, train_time/(args.num_epochs - skip_epoch))
+    print("rank:", rank, " end2end time:", total/(args.num_epochs - skip_epoch))
+    print("train: ", rank, train_time/(args.num_epochs - skip_epoch))
     cleanup()
 
 if __name__ == '__main__':
@@ -321,14 +337,8 @@ if __name__ == '__main__':
     parser.add_argument('--cache_ratio', default=10, type=int, help='Percentages of features on GPUs')
     args = parser.parse_args()
     
-    all_labels = th.tensor([])
-    for rank in range(args.n_ranks):
-        _, node_feats, _, _, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
-        train_label = node_feats['_N/labels']
-        all_labels = th.cat((all_labels, train_label), dim=0).long()
-
     mp.spawn(run,
-          args=(args, all_labels),
+          args=(args, ),
           nprocs=args.n_ranks,
           join=True)
   
