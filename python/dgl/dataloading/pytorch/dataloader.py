@@ -517,7 +517,7 @@ class NodeDataLoader:
             if callable(getattr(block_sampler, "set_output_context", None)) and num_workers == 0:
                 block_sampler.set_output_context(to_dgl_context(device))
 
-            self.collator = _NodeCollator(g, nids, block_sampler, **collator_kwargs)
+            self.collator = NodeCollator(g, nids, block_sampler, **collator_kwargs)
             self.use_scalar_batcher, self.scalar_batcher, self.dataloader, self.dist_sampler = \
                 _init_dataloader(self.collator, device, dataloader_kwargs, use_ddp, ddp_seed)
 
@@ -531,6 +531,8 @@ class NodeDataLoader:
         self.device = device
 
     def __iter__(self):
+        """DS"""
+        return iter(self.dataloader)
         """Return the iterator of the data loader."""
         if self.is_distributed:
             # Directly use the iterator of DistDataLoader, which doesn't copy features anyway.

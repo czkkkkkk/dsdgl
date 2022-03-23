@@ -15,6 +15,7 @@
 #include <vector>
 
 using namespace dgl::runtime;
+using namespace dgl::aten;
 
 namespace dgl {
 namespace ds {
@@ -50,6 +51,12 @@ struct DSContext {
   FeatMode feat_mode;
   IdArray dev_feats, shared_feats, feat_pos_map;
   int feat_dim;
+
+
+  // Graph related arrays
+  bool graph_loaded = false;
+  CSRMatrix dev_graph, uva_graph;
+  int64_t n_cached_nodes, n_uva_nodes;
 
   // Kernel controller
   bool enable_kernel_control;

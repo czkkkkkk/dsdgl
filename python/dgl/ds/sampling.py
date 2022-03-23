@@ -15,15 +15,15 @@ __all__ = [
 
 def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, fanout, global_nid_map, edge_dir='in', prob=None, replace=True,
                      copy_ndata=True, copy_edata=True, is_local=False):
-    prob_arrays = [nd.array([], ctx=nd.cpu())] * len(g.etypes)
+    prob_arrays = [nd.array([], ctx=nd.cpu())]
     device_min_vids = F.to_dgl_nd(device_min_vids)
     device_min_eids = F.to_dgl_nd(device_min_eids)
     nodes = F.to_dgl_nd(nodes)
     global_nid_map = F.to_dgl_nd(global_nid_map)
-    subgidx = _CAPI_DGLDSSampleNeighbors(g._graph, num_vertices, device_min_vids, device_min_eids, nodes, 
+    subgidx = _CAPI_DGLDSSampleNeighbors(None, num_vertices, device_min_vids, device_min_eids, nodes, 
                                          fanout, edge_dir, prob_arrays, replace, global_nid_map, is_local)
 
-    src, dst, eid = subgidx.edges(0)
+    # src, dst, eid = subgidx.edges(0)
     # ret = graph((dst, src), num_nodes = num_vertices)
     # ret = ds_subgraph((dst, src), num_nodes = num_vertices)
     ret = DGLHeteroGraph(subgidx)

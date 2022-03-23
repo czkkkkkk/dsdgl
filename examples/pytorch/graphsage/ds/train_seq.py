@@ -56,7 +56,8 @@ class NeighborSampler(object):
         is_local = True 
         for fanout in self.fanouts:
             # For each seed node, sample ``fanout`` neighbors.
-            frontier = self.sample_neighbors(self.g, self.num_vertices,
+            # No need to pass graph now
+            frontier = self.sample_neighbors(g, self.num_vertices,
                                              self.device_min_vids, self.device_min_eids,
                                              seeds, fanout, self.global_nid_map, is_local = is_local)
             
@@ -176,9 +177,11 @@ def run(rank, args):
     g = None
     print('Rank {}, Host memory usage after create format: {} GB'.format(rank, process.memory_info().rss / 1e9))
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
-    train_g = train_g.to(device)
+    global_nid_map = train_g.ndata[dgl.NID].to(device)
+    dgl.ds.cache_graph(train_g, args.graph_cache_ratio)
+    train_g = None
+    # train_g = train_g.to(device)
     train_label = train_label.to(device)
-    global_nid_map = train_g.ndata[dgl.NID]
     #todo: transfer gpb to gpu
     min_vids = [0] + list(gpb._max_node_ids)
     min_vids = F.tensor(min_vids, dtype=F.int64).to(device)
@@ -276,6 +279,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.003)
     parser.add_argument('--feat_mode', default='AllCache', type=str, help='Feature cache mode. (AllCache, PartitionCache, ReplicateCache)')
     parser.add_argument('--cache_ratio', default=100, type=int, help='Percentages of features on GPUs')
+    parser.add_argument('--graph_cache_ratio', default=100, type=int, help='Ratio of edges cached in the GPU')
     args = parser.parse_args()
     
 

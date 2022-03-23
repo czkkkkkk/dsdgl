@@ -104,11 +104,11 @@ def run(rank, args):
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
     train_g = g.reverse().formats(['csr'])
-    print('train_g type', type(train_g))
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
-    train_g = train_g.to(device)
-    print('finish copy graph to device')
-    global_nid_map = train_g.ndata[dgl.NID]
+    dgl.ds.cache_graph(train_g, args.graph_cache_ratio)
+    # train_g = train_g.to(device)
+    global_nid_map = train_g.ndata[dgl.NID].to(device)
+    train_g = None
     #todo: transfer gpb to gpu
     min_vids = [0] + list(gpb._max_node_ids)
     min_vids = F.tensor(min_vids, dtype=F.int64).to(device)
@@ -171,6 +171,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', default=1024, type=int, help='Batch size')
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=10, type=int, help='Epochs')
+    parser.add_argument('--graph_cache_ratio', default=100, type=int, help='Ratio of edges cached in the GPU')
     args = parser.parse_args()
     
 

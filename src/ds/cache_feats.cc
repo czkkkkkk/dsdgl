@@ -194,7 +194,7 @@ void ReplicateCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_de
   ds_ctx->feat_pos_map = IdArray::FromVector(feat_pos_map, {kDLGPU, rank});
 }
 
-DGL_REGISTER_GLOBAL("ds.cache_feats._CAPI_DGLDSCacheFeats")
+DGL_REGISTER_GLOBAL("ds.cache._CAPI_DGLDSCacheFeats")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   std::string feat_mode = args[0];
   IdArray feats = args[1];

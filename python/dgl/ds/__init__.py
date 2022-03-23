@@ -4,7 +4,7 @@ import torch as th
 
 from .sampling import *
 from .pin_graph import pin_graph, test_array
-from .cache_feats import cache_feats
+from .cache import cache_feats, cache_graph
 from .load_subtensor import load_subtensor
 from .. import backend as F
 
