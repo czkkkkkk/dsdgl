@@ -22,7 +22,7 @@ namespace ds {
 
 enum FeatMode { kFeatModeAllCache, kFeatModePartitionCache, kFeatModeReplicateCache };
 
-#define ENCODE_SHARED_ID(i) (-(i)-2)
+#define ENCODE_ID(i) (-(i)-2)
 
 #define SAMPLER_ROLE 0
 #define LOADER_ROLE 1
@@ -57,6 +57,7 @@ struct DSContext {
   bool graph_loaded = false;
   CSRMatrix dev_graph, uva_graph;
   int64_t n_cached_nodes, n_uva_nodes;
+  IdArray adj_pos_map;
 
   // Kernel controller
   bool enable_kernel_control;

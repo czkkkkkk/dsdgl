@@ -60,7 +60,6 @@ class NeighborSampler(object):
                                              seeds, fanout, self.global_nid_map, is_local = is_local)
             
             is_local = False
-            th.cuda.synchronize()
             # Then we compact the frontier into a bipartite graph for message passing.
             block = dgl.to_block(frontier, seeds, min_vids=self.device_min_vids)
             th.cuda.synchronize()
@@ -68,7 +67,6 @@ class NeighborSampler(object):
             # Obtain the seed nodes for next layer.
             seeds = block.srcdata[dgl.NID]
             blocks.insert(0, block)
-            th.cuda.synchronize()
         return blocks
 
 def run(rank, args):

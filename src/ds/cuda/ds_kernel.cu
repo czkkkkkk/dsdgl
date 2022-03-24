@@ -200,8 +200,7 @@ __global__ void _CSRRowWiseSampleReplaceKernelV2(
     IdType *in_index,
     IdType *uva_in_ptr,
     IdType *uva_in_index,
-    IdType n_cached_nodes,
-    IdType n_uva_nodes,
+    IdType *adj_pos_map,
     IdType *out_ptr, 
     IdType *out_index) {
   assert(blockDim.x == WARP_SIZE);
@@ -214,10 +213,18 @@ __global__ void _CSRRowWiseSampleReplaceKernelV2(
 
   while (out_row < last_row) {
     const int64_t row = in_rows[out_row];
-    bool on_dev = row < n_cached_nodes;
-    const int64_t in_row_start = on_dev? in_ptr[row]: uva_in_ptr[row-n_cached_nodes];
+    int64_t pos = adj_pos_map[row];
+    bool on_dev;
+    if(pos >= 0) {
+      on_dev = true;
+    } else {
+      assert(pos != -1);
+      on_dev = false;
+      pos = ENCODE_ID(pos);
+    }
+    const int64_t in_row_start = on_dev? in_ptr[pos]: uva_in_ptr[pos];
     const int64_t out_row_start = out_ptr[out_row];
-    const int64_t deg = (on_dev? in_ptr[row+1]: uva_in_ptr[row+1-n_cached_nodes]) - in_row_start;
+    const int64_t deg = (on_dev? in_ptr[pos+1]: uva_in_ptr[pos+1]) - in_row_start;
     const int64_t* index = (on_dev? in_index: uva_in_index) + in_row_start;
 
     if (deg > 0) {
@@ -254,7 +261,8 @@ IdArray SampleNeighbors(IdArray frontier, int fanout) {
   const uint64_t random_seed = 7777777;
   if(grid.x > 0) {
     _CSRRowWiseSampleReplaceKernelV2<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
-      random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), dev_csr.indptr.Ptr<IdType>(), dev_csr.indices.Ptr<IdType>(), uva_csr.indptr.Ptr<IdType>(), uva_csr.indices.Ptr<IdType>(), n_cached_nodes, n_uva_nodes,
+      random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), dev_csr.indptr.Ptr<IdType>(), dev_csr.indices.Ptr<IdType>(), uva_csr.indptr.Ptr<IdType>(), uva_csr.indices.Ptr<IdType>(), 
+      ds_context->adj_pos_map.Ptr<IdType>(),
       edge_offset.Ptr<IdType>(), neighbors.Ptr<IdType>()
     );
   }
@@ -523,7 +531,7 @@ void _FeatTypePartKernel(int n_nodes, IdType* nodes,
     atomicAdd((unsigned long long*)(local_count + feat_type), 1);
     part_ids[idx] = feat_type;
     if(feat_type == FEAT_ON_HOST) {
-      part_pos[idx] = ENCODE_SHARED_ID(feat_pos_map[nid]);
+      part_pos[idx] = ENCODE_ID(feat_pos_map[nid]);
     } else {
       part_pos[idx] = nid; 
     }
