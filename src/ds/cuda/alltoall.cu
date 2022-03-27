@@ -197,9 +197,6 @@ __global__
 void _AlltoallKernel(AlltoallArgs args) {
   int bid = blockIdx.x;
   int tid = threadIdx.x;
-  if (tid == 0) {
-    atomicAdd(args.cuda_launch_lock, -1);
-  }
   int world_size = args.world_size;
   int rank = args.rank;
   int peer_id = tid / args.n_threads_per_conn;
@@ -279,7 +276,7 @@ IdArray Diff(IdArray prefix_sum) {
   }                                                             \
 } while (0)
 
-void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_t* recv_offset, int n_bytes, int align_size, CommInfo* comm_info, int rank, int world_size, int *cuda_launch_lock) {
+void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_t* recv_offset, int n_bytes, int align_size, CommInfo* comm_info, int rank, int world_size) {
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   AlltoallArgs args;
   args.rank = rank;
@@ -294,8 +291,6 @@ void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_
   args.send_offset = send_offset;
   args.recvbuff = recvbuff;
   args.recv_offset = recv_offset;
-  *cuda_launch_lock = comm_info->n_block;
-  args.cuda_launch_lock = cuda_launch_lock;
   dim3 grid_dim(comm_info->n_block);
   dim3 block_dim(n_threads);
   void *kargs[] = {&args};
@@ -308,7 +303,7 @@ void CustomAlltoall(void* sendbuff, int64_t* send_offset, void* recvbuff, int64_
 
 }
 
-IdArray ExchangeSendSizes(IdArray send_offset, CommInfo* comm_info, int rank, int world_size, int *cuda_launch_lock) {
+IdArray ExchangeSendSizes(IdArray send_offset, CommInfo* comm_info, int rank, int world_size) {
   auto stream = CUDAThreadEntry::ThreadLocal()->stream;
   auto send_sizes = Diff(send_offset);
   IdArray recv_sizes = IdArray::Empty({world_size}, send_offset->dtype, send_offset->ctx);
@@ -326,8 +321,6 @@ IdArray ExchangeSendSizes(IdArray send_offset, CommInfo* comm_info, int rank, in
   args.recv_offset = nullptr;
   dim3 grid_dim(1);
   dim3 block_dim(n_threads);
-  *cuda_launch_lock = 1;
-  args.cuda_launch_lock = cuda_launch_lock;
   void *kargs[] = {&args};
   ALLTOALL_SWITCH_ALIGN_SIZE(sizeof(IdType), AlignType, {
     ALLTOALL_SWITCH_GROUP_SIZE(args.n_threads_per_conn, GroupSize, {
@@ -374,7 +367,6 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     auto *ds_context = DSContext::Global();
     auto dgl_context = input->ctx;
     int type_bytes = input->dtype.bits / 8;
-    volatile int *cuda_launch_lock = &(CUDAThreadEntry::ThreadLocal()->cuda_launch_lock);
     int thread_id = CUDAThreadEntry::ThreadLocal()->thread_id;
 
     // NOTE: to guarantee the send_offset is ready
@@ -384,7 +376,7 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     CommInfo *comm_info = ds_context->comm_info[thread_id].get();
     if(IsNullArray(recv_offset)) {
       scheduler->TryComm(thread_id);
-      recv_offset = ExchangeSendSizes(send_offset, comm_info, rank, world_size, (int *)cuda_launch_lock);
+      recv_offset = ExchangeSendSizes(send_offset, comm_info, rank, world_size);
       // while (*cuda_launch_lock > 0);
       // CUDACHECK(cudaStreamSynchronize(stream));
       // CHECK_EQ(*cuda_launch_lock, 0);
@@ -398,7 +390,7 @@ std::pair<IdArray, IdArray> Alltoall(IdArray input, IdArray send_offset, int exp
     // Exclusive all to all
     if(world_size > 1) {
       scheduler->TryComm(thread_id);
-      CustomAlltoall(input.Ptr<void>(), send_offset.Ptr<IdType>(), recvbuff.Ptr<void>(), recv_offset.Ptr<IdType>(), type_bytes * expand_size, input->dtype.bits / 8, comm_info, rank, world_size, (int *)cuda_launch_lock);
+      CustomAlltoall(input.Ptr<void>(), send_offset.Ptr<IdType>(), recvbuff.Ptr<void>(), recv_offset.Ptr<IdType>(), type_bytes * expand_size, input->dtype.bits / 8, comm_info, rank, world_size);
       // while (*cuda_launch_lock > 0);
       // CUDACHECK(cudaStreamSynchronize(stream));
       // CHECK_EQ(*cuda_launch_lock, 0);

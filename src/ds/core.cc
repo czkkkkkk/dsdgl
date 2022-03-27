@@ -126,9 +126,6 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSSetStream")
   
   // Create data copy stream to pipeline with kernels
   CUDACHECK(cudaStreamCreate(&thr_entry->data_copy_stream));
-
-  CUDACHECK(cudaHostRegister((void*)&(thr_entry->cuda_launch_lock), sizeof(int), cudaHostRegisterMapped));
-  thr_entry->cuda_launch_lock = 0;
   CUDACHECK(cudaDeviceSynchronize());
 
   auto* ds_thread_local = DSThreadEntry::ThreadLocal();

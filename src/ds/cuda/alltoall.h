@@ -19,7 +19,6 @@ struct AlltoallArgs {
   IdType *send_offset;
   void *recvbuff;
   IdType *recv_offset;
-  int *cuda_launch_lock;
 };
 
 /**
