@@ -20,6 +20,8 @@ def cache_feats(feat_mode, graph, feats, ratio):
 
 def cache_graph(g, ratio):
     assert ratio >= 0 and ratio <= 100
-    _CAPI_DGLDSCacheGraph(g._graph, ratio)
+    # Use out degree because we assume the graph is reversed
+    degs = F.to_dgl_nd(g.out_degrees())
+    _CAPI_DGLDSCacheGraph(g._graph, ratio, degs)
 
 _init_api("dgl.ds.cache")

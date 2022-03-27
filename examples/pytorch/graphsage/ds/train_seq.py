@@ -137,6 +137,7 @@ def show_thread():
   print('python thread id: {}, thread name: {}'.format(t.ident, t.getName()))
 
 def run(rank, args):
+    print('Start rank', rank, 'with args:', args)
     process = psutil.Process(os.getpid())
     setup(rank, args.n_ranks)
     ds.init(rank, args.n_ranks)
@@ -173,7 +174,7 @@ def run(rank, args):
     device = th.device('cuda:%d' % rank)
     train_nid = train_nid.to(device)
     print('Rank {}, Host memory usage before create format: {} GB'.format(rank, process.memory_info().rss / 1e9))
-    train_g = g.formats(['csr'])
+    train_g = g.reverse().formats(['csr'])
     g = None
     print('Rank {}, Host memory usage after create format: {} GB'.format(rank, process.memory_info().rss / 1e9))
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])

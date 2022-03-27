@@ -90,7 +90,7 @@ void PartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_de
     feat_pos_map.resize(n_nodes, -1);
     for(int i = 0; i < flatten_ids.size(); ++i) {
       IdType global_nid = flatten_ids[i];
-      feat_pos_map[global_nid] = ENCODE_SHARED_ID(i);
+      feat_pos_map[global_nid] = ENCODE_ID(i);
     }
     shared_feats = IdArray::FromVector<DataType>(flatten_feats);
   }
@@ -172,7 +172,7 @@ void ReplicateCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_de
           dev_feats_vec.push_back(flatten_feats[idx*feat_dim+j]);
         }
       } else {
-        feat_pos_map[gid] = ENCODE_SHARED_ID(i - n_dev_nodes);
+        feat_pos_map[gid] = ENCODE_ID(i - n_dev_nodes);
         for(int j = 0; j < feat_dim; ++j) {
           shared_feats_vec.push_back(flatten_feats[idx*feat_dim+j]);
         }
@@ -198,13 +198,13 @@ DGL_REGISTER_GLOBAL("ds.cache._CAPI_DGLDSCacheFeats")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   std::string feat_mode = args[0];
   IdArray feats = args[1];
-  LOG(INFO) << "Cache feature mode: " << feat_mode;
   if(feat_mode == "AllCache") {
     PartitionCacheAllFeats(feats);
   } else if(feat_mode == "PartitionCache") {
     IdArray global_ids = args[2];
     IdArray local_degrees = args[3];
     int ratio = args[4];
+    LOG(INFO) << "Feature cache ratio: " << ratio;
     CHECK(global_ids->dtype.bits == 64);
     CHECK(local_degrees->dtype.bits == 64);
     PartitionCacheSomeFeats(feats, global_ids, local_degrees, ratio);
@@ -212,6 +212,7 @@ DGL_REGISTER_GLOBAL("ds.cache._CAPI_DGLDSCacheFeats")
     IdArray global_ids = args[2];
     IdArray local_degrees = args[3];
     int ratio = args[4];
+    LOG(INFO) << "Feature cache ratio: " << ratio;
     CHECK(global_ids->dtype.bits == 64);
     CHECK(local_degrees->dtype.bits == 64);
     ReplicateCacheSomeFeats(feats, global_ids, local_degrees, ratio);
