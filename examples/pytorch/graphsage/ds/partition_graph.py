@@ -42,7 +42,41 @@ def load_mag240m(path='/data/dgl/mag240m'):
     g.ndata['val_mask'] = val_mask
     return g
 
+def loadUK():
+    dataset = WebUKDataset()
+    graph = dataset[0]
+    node_types = graph.ndata['node_type'].numpy()
+    train_mask = (node_types == 0)
+    val_mask = (node_types == 1)
+    test_mask = (node_types == 2)
+    graph.ndata['train_mask'] = generate_mask_tensor(train_mask)
+    graph.ndata['val_mask'] = generate_mask_tensor(val_mask)
+    graph.ndata['test_mask'] = generate_mask_tensor(test_mask)
+    return graph
 
+def loadFS():
+    dataset = FriendSterDataset()
+    graph = dataset[0]
+    node_types = graph.ndata['node_type'].numpy()
+    train_mask = (node_types == 0)
+    val_mask = (node_types == 1)
+    test_mask = (node_types == 2)
+    graph.ndata['train_mask'] = generate_mask_tensor(train_mask)
+    graph.ndata['val_mask'] = generate_mask_tensor(val_mask)
+    graph.ndata['test_mask'] = generate_mask_tensor(test_mask)
+    return graph
+
+def loadTW():
+    dataset = TwitterDataset()
+    graph = dataset[0]
+    node_types = graph.ndata['node_type'].numpy()
+    train_mask = (node_types == 0)
+    val_mask = (node_types == 1)
+    test_mask = (node_types == 2)
+    graph.ndata['train_mask'] = generate_mask_tensor(train_mask)
+    graph.ndata['val_mask'] = generate_mask_tensor(val_mask)
+    graph.ndata['test_mask'] = generate_mask_tensor(test_mask)
+    return graph
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser("Partition builtin graphs")
@@ -76,6 +110,12 @@ if __name__ == '__main__':
         g, _ = load_ogb('ogbn-papers100M', root=args.root)
     elif args.dataset == 'mag240m':
         g = load_mag240m()
+    elif args.dataset == 'webuk':
+        g = loadUK()
+    elif args.dataset == 'friendster':
+        g = loadFS()
+    elif args.dataset == 'twitter':
+        g = loadTW()
 
     print('load {} takes {:.3f} seconds'.format(args.dataset, time.time() - start))
     print('|V|={}, |E|={}'.format(g.number_of_nodes(), g.number_of_edges()))
