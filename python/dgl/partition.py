@@ -8,6 +8,7 @@ from . import backend as F
 from . import utils
 from .base import EID, NID, NTYPE, ETYPE
 from .subgraph import edge_subgraph
+import psutil, os
 
 __all__ = ["metis_partition", "metis_partition_assignment",
            "partition_graph_with_halo"]
@@ -156,9 +157,12 @@ def partition_graph_with_halo(g, node_part, extra_cached_hops, reshuffle=False):
     '''
     assert len(node_part) == g.number_of_nodes()
     if reshuffle:
+        print('Doing reshuffle graph')
         g, node_part = reshuffle_graph(g, node_part)
         orig_nids = g.ndata['orig_id']
         orig_eids = g.edata['orig_id']
+    process = psutil.Process(os.getpid())
+    print('Host memory usage after shuffle graph: {} GB'.format(process.memory_info().rss / 1e9))
 
     node_part = utils.toindex(node_part)
     start = time.time()
@@ -268,8 +272,9 @@ def metis_partition_assignment(g, k, balance_ntypes=None, balance_edges=False, m
     # METIS works only on symmetric graphs.
     # The METIS runs on the symmetric graph to generate the node assignment to partitions.
     start = time.time()
-    sym_gidx = _CAPI_DGLMakeSymmetric_Hetero(g._graph)
-    sym_g = DGLHeteroGraph(gidx=sym_gidx)
+    # sym_gidx = _CAPI_DGLMakeSymmetric_Hetero(g._graph)
+    # sym_g = DGLHeteroGraph(gidx=sym_gidx)
+    sym_g = g
     print('Convert a graph into a bidirected graph: {:.3f} seconds'.format(
         time.time() - start))
     vwgt = []

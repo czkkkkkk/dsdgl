@@ -252,7 +252,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionWithHalo_Hetero")
     // try to construct in-CSR and out-CSR in openmp for loop, which will lead
     // to some unexpected results.
     ugptr->GetInCSR();
-    ugptr->GetOutCSR();
+    // ugptr->GetOutCSR();
     std::vector<std::shared_ptr<HaloHeteroSubgraph>> subgs(max_part_id + 1);
     int num_partitions = part_nodes.size();
     runtime::parallel_for(0, num_partitions, [&](int b, int e) {

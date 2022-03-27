@@ -8,6 +8,10 @@ import time
 
 from load_graph import load_reddit, load_ogb
 from ogb.lsc import MAG240MDataset
+from friendster import FriendSterDataset
+from dgl.data.utils import generate_mask_tensor
+from dgl.convert import to_homogeneous
+import psutil
 
 def load_mag240m(path='/data/dgl/mag240m'):
     '''
@@ -127,11 +131,14 @@ if __name__ == '__main__':
         balance_ntypes = None
 
     if args.undirected:
+        print('calling to to_bidirected')
         sym_g = dgl.to_bidirected(g, readonly=True)
         for key in g.ndata:
             sym_g.ndata[key] = g.ndata[key]
         g = sym_g
 
+    process = psutil.Process(os.getpid())
+    print('Host memory usage before partition graph: {} GB'.format(process.memory_info().rss / 1e9))
     dgl.distributed.partition_graph(g, args.dataset, args.num_parts, args.output,
                                     part_method=args.part_method,
                                     balance_ntypes=balance_ntypes,

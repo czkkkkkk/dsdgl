@@ -9,7 +9,7 @@ from dgl.data.dgl_dataset import DGLDataset, DGLBuiltinDataset
 from dgl.data.utils import _get_dgl_url, generate_mask_tensor, load_graphs, save_graphs, deprecate_property
 import dgl.backend as F
 from dgl.convert import from_scipy
-from dgl.transforms import reorder_graph
+# from dgl.transforms import reorder_graph
 import dgl
 
 class FriendSterDataset(DGLDataset):
@@ -23,8 +23,7 @@ class FriendSterDataset(DGLDataset):
                                             url=FriendSterDataset.url,
                                             raw_dir=FriendSterDataset.raw_dir,
                                             force_reload=force_reload,
-                                            verbose=verbose,
-                                            transform=transform)
+                                            verbose=verbose)
 
   def get_rand_type(self):
     val = np.random.uniform()
