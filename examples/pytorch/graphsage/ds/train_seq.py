@@ -151,11 +151,13 @@ def run(rank, args):
 
 
     num_vertices = gpb._max_node_ids[-1]
-    #test_sampling(num_vertices, g, rank)
-    #time.sleep(2)
-    #exit(0)
-    in_feats = node_feats['_N/features'].shape[1] 
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
+    if '_N/features' not in node_feats:
+      print('Using fake features with feat dim: ', args.in_feats)
+      node_feats['_N/features'] = th.ones([n_local_nodes, args.in_feats], dtype=th.float32)
+      node_feats['_N/labels'] = th.zeros([n_local_nodes], dtype=th.float32)
+
+    in_feats = node_feats['_N/features'].shape[1] 
     print('rank {}, # global: {}, # local: {}'.format(rank, num_vertices, n_local_nodes))
     print('# in feats:', node_feats['_N/features'].shape[1])
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
@@ -218,7 +220,7 @@ def run(rank, args):
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
-    skip_epoch = 5
+    skip_epoch = 3
     data_buffer = SequentialQueue()
     sample_worker = Sampler(dataloader, train_label, min_vids, data_buffer, in_feats, rank, args.num_epochs)
 
@@ -258,7 +260,7 @@ def run(rank, args):
         toc = time.time()
         if epoch >= skip_epoch:
             total += (toc - tic)
-        print('training time:', training_time)
+        print('rank', rank, 'training time:', training_time)
         print("rank:", rank, toc - tic)
     sample_worker.join()
     print("rank:", rank, "e2e time:", total/(args.num_epochs - skip_epoch))
@@ -281,6 +283,7 @@ if __name__ == '__main__':
     parser.add_argument('--feat_mode', default='AllCache', type=str, help='Feature cache mode. (AllCache, PartitionCache, ReplicateCache)')
     parser.add_argument('--cache_ratio', default=100, type=int, help='Percentages of features on GPUs')
     parser.add_argument('--graph_cache_ratio', default=100, type=int, help='Ratio of edges cached in the GPU')
+    parser.add_argument('--in_feats', default=256, type=int, help='In feature dimension used when the graph do not have feature')
     args = parser.parse_args()
     
 

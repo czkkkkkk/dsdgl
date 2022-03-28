@@ -172,6 +172,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSRebalanceNIds")
   int batch_size = args[1];
   IdArray global_nid_map = args[2];
   IdArray global_nids = ToGlobal(nids, global_nid_map);
+  LOG(INFO) << "Rank: " << DSContext::Global()->rank << ", # train ids before rebalance: " << nids->shape[0];
   auto* coor = DSContext::Global()->coordinator.get();
   auto ret = Rebalance(global_nids, batch_size, coor);
   *rv = ret;

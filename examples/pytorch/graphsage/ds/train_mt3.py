@@ -27,6 +27,7 @@ from torch.nn.parallel import DistributedDataParallel
 import sys
 import os, psutil
 from pynvml import *
+from utils import GPUMonitor
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -194,8 +195,15 @@ def run(rank, args):
     process = psutil.Process(os.getpid())
     print('Host memory usage after load partition {} GB'.format(process.memory_info().rss / 1e9))
     g = dgl.add_self_loop(g)
+
     num_vertices = gpb._max_node_ids[-1]
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
+
+    if '_N/features' not in node_feats:
+      print('Using fake features with feat dim: ', args.in_feats)
+      node_feats['_N/features'] = th.ones([n_local_nodes, args.in_feats], dtype=th.float32)
+      node_feats['_N/labels'] = th.zeros([n_local_nodes], dtype=th.float32)
+
     print('rank {}, # global: {}, # local: {}'.format(rank, num_vertices, n_local_nodes))
     print('# in feats:', node_feats['_N/features'].shape[1])
     train_nid = th.masked_select(g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
@@ -265,7 +273,7 @@ def run(rank, args):
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
-    skip_epoch = 5
+    skip_epoch = 3
     sample_data_buffer = MPMCQueue(1, sampler_number, loader_number)
     # sample_data_buffer = MPMCQueue_simple(10, sampler_number, loader_number)
     subtensor_data_buffer = MPMCQueue(1, loader_number, 1)
@@ -289,8 +297,11 @@ def run(rank, args):
       load_workers.append(SubtensorLoader(train_label, min_vids, sample_data_buffer, subtensor_data_buffer, rank, args.num_epochs, in_feats, thread_id, sampler_number, loader_number, batch_per_loader))
       load_workers[i].start()
 
+    monitor = GPUMonitor(rank)
     train_time = 0
     for epoch in range(args.num_epochs):
+        if epoch == skip_epoch:
+          monitor.start()
         tic = time.time()
         step = 0
         for i in range(total_batches):
@@ -314,12 +325,15 @@ def run(rank, args):
             total += (toc - tic)
             train_time += step
         print("Epoch {}, rank {}, train time {}, epoch time{}".format(epoch, rank, step, toc-tic))
+    gpu_util, _ = monitor.stop()
+    print('Rank {}, average GPU utilization {}'.format(rank, gpu_util))
+    print("rank:", rank, " end2end time:", total/(args.num_epochs - skip_epoch))
+    print("train: ", rank, train_time/(args.num_epochs - skip_epoch))
     for i in range(sampler_number):
       sample_workers[i].join()
     for i in range(loader_number):
       load_workers[i].join()
-    print("rank:", rank, " end2end time:", total/(args.num_epochs - skip_epoch))
-    print("train: ", rank, train_time/(args.num_epochs - skip_epoch))
+    monitor.join()
     cleanup()
 
 if __name__ == '__main__':
@@ -337,6 +351,7 @@ if __name__ == '__main__':
     parser.add_argument('--feat_mode', default='PartitionCache', type=str, help='Feature cache mode. (AllCache, PartitionCache, ReplicateCache)')
     parser.add_argument('--cache_ratio', default=10, type=int, help='Percentages of features on GPUs')
     parser.add_argument('--graph_cache_ratio', default=100, type=int, help='Ratio of edges cached in the GPU')
+    parser.add_argument('--in_feats', default=256, type=int, help='In feature dimension used when the graph do not have feature')
     args = parser.parse_args()
     
     mp.spawn(run,
