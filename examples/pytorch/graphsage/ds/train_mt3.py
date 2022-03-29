@@ -181,6 +181,11 @@ def print_nvidia_mem(prefix):
   info = nvmlDeviceGetMemoryInfo(h)
   print('{}, NVIDIA free {} G, used {} G'.format(prefix, info.free / 1e9, info.used / 1e9))
 
+def calculate_ratio(gb, size, entry_size_in_byte):
+  n_cached = gb * 1024 * 1024 * 1024 / entry_size_in_byte
+  ret = n_cached / size * 100
+  return min(100., ret)
+  
 def run(rank, args):
     print('Start rank', rank, 'with args:', args)
     th.cuda.set_device(rank)
@@ -203,6 +208,13 @@ def run(rank, args):
       print('Using fake features with feat dim: ', args.in_feats)
       node_feats['_N/features'] = th.ones([n_local_nodes, args.in_feats], dtype=th.float32)
       node_feats['_N/labels'] = th.zeros([n_local_nodes], dtype=th.float32)
+
+    if args.graph_cache_gb != -1:
+      args.graph_cache_ratio = calculate_ratio(args.graph_cache_gb, g.number_of_edges(), 8)
+    if args.feat_cache_gb != -1:
+      args.cache_ratio = calculate_ratio(args.feat_cache_gb, n_local_nodes, 4 * node_feats['_N/features'].shape[1])
+
+    print('Graph cache ratio {}, feature cache ratio {}'.format(args.graph_cache_ratio, args.cache_ratio))
 
     print('rank {}, # global: {}, # local: {}'.format(rank, num_vertices, n_local_nodes))
     print('# in feats:', node_feats['_N/features'].shape[1])
@@ -351,6 +363,8 @@ if __name__ == '__main__':
     parser.add_argument('--cache_ratio', default=10, type=int, help='Percentages of features on GPUs')
     parser.add_argument('--graph_cache_ratio', default=100, type=int, help='Ratio of edges cached in the GPU')
     parser.add_argument('--in_feats', default=256, type=int, help='In feature dimension used when the graph do not have feature')
+    parser.add_argument('--graph_cache_gb', default=-1, type=int, help='Memory used to cache graph topology. Setting it not equal to -1 disables graph_cache_ratio')
+    parser.add_argument('--feat_cache_gb', default=-1, type=int, help='Memory used to cache features, Setting it not equal to -1 disables cache_ratio')
     args = parser.parse_args()
     
     mp.spawn(run,
