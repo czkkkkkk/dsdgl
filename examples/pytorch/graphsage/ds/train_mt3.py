@@ -325,8 +325,7 @@ def run(rank, args):
             total += (toc - tic)
             train_time += step
         print("Epoch {}, rank {}, train time {}, epoch time{}".format(epoch, rank, step, toc-tic))
-    gpu_util, _ = monitor.stop()
-    print('Rank {}, average GPU utilization {}'.format(rank, gpu_util))
+    monitor.stop()
     print("rank:", rank, " end2end time:", total/(args.num_epochs - skip_epoch))
     print("train: ", rank, train_time/(args.num_epochs - skip_epoch))
     for i in range(sampler_number):
