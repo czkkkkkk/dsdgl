@@ -23,6 +23,7 @@ import threading
 from threading import Thread
 from queue import Queue
 import os, psutil
+from utils import GPUMonitor
 #from dgl.ds.graph_partition_book import *
 
 def setup(rank, world_size):
@@ -222,6 +223,7 @@ def run(rank, args):
     total = 0
     skip_epoch = 3
     data_buffer = SequentialQueue()
+    gpu_monitor = GPUMonitor(rank)
     sample_worker = Sampler(dataloader, train_label, min_vids, data_buffer, in_feats, rank, args.num_epochs)
 
     s = th.cuda.Stream(device=device)
@@ -230,6 +232,8 @@ def run(rank, args):
     sample_worker.start()
 
     for epoch in range(args.num_epochs):
+        if epoch == skip_epoch:
+          gpu_monitor.start()
         tic = time.time()
 
         training_time = 0
@@ -262,6 +266,8 @@ def run(rank, args):
             total += (toc - tic)
         print('rank', rank, 'training time:', training_time)
         print("rank:", rank, toc - tic)
+    gpu_monitor.stop()
+    gpu_monitor.join()
     sample_worker.join()
     print("rank:", rank, "e2e time:", total/(args.num_epochs - skip_epoch))
     cleanup()
