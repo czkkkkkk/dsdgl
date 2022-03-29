@@ -191,6 +191,44 @@ __global__ void _CSRRowWiseSampleReplaceKernel(
 }
 
 template <int BLOCK_WARPS, int TILE_SIZE>
+__global__ void _CSRRowWiseSampleReplaceKernelUVAProfile(
+    const uint64_t rand_seed,
+    int num_picks, 
+    IdType num_rows, 
+    IdType *in_rows,
+    IdType *in_ptr, 
+    IdType *in_index,
+    IdType *out_ptr, 
+    IdType *out_index,
+    IdType *profile_sampled_index) {
+  assert(blockDim.x == WARP_SIZE);
+
+  int64_t out_row = blockIdx.x*TILE_SIZE+threadIdx.y;
+  const int64_t last_row = min(static_cast<int64_t>(blockIdx.x+1)*TILE_SIZE, num_rows);
+
+  curandState rng;
+  curand_init(rand_seed*gridDim.x+blockIdx.x, threadIdx.y*WARP_SIZE+threadIdx.x, 0, &rng);
+
+  while (out_row < last_row) {
+    const int64_t row = in_rows[out_row];
+    const int64_t in_row_start = in_ptr[row];
+    const int64_t out_row_start = out_ptr[out_row];
+    const int64_t deg = in_ptr[row + 1] - in_row_start;
+
+    if (deg > 0) {
+      // each thread then blindly copies in rows only if deg > 0.
+      for (int idx = threadIdx.x; idx < num_picks; idx += blockDim.x) {
+        const int64_t edge = curand(&rng) % deg;
+        const int64_t out_idx = out_row_start+idx;
+        out_index[out_idx] = in_index[in_row_start+edge];
+        profile_sampled_index[out_row*num_picks+idx] = in_row_start + edge;
+      }
+    }
+    out_row += BLOCK_WARPS;
+  }
+}
+
+template <int BLOCK_WARPS, int TILE_SIZE>
 __global__ void _CSRRowWiseSampleReplaceKernelV2(
     const uint64_t rand_seed,
     int num_picks, 
@@ -239,6 +277,61 @@ __global__ void _CSRRowWiseSampleReplaceKernelV2(
   }
 }
 
+template <int BLOCK_WARPS, int TILE_SIZE>
+__global__ void _CSRRowWiseSampleReplaceKernelV2Profile(
+    const uint64_t rand_seed,
+    int num_picks, 
+    IdType num_rows, 
+    IdType *in_rows,
+    IdType *in_ptr, 
+    IdType *in_index,
+    IdType *uva_in_ptr,
+    IdType *uva_in_index,
+    IdType *adj_pos_map,
+    IdType *out_ptr, 
+    IdType *out_index,
+    IdType *profile_sampled_index) {
+  assert(blockDim.x == WARP_SIZE);
+
+  int64_t out_row = blockIdx.x*TILE_SIZE+threadIdx.y;
+  const int64_t last_row = min(static_cast<int64_t>(blockIdx.x+1)*TILE_SIZE, num_rows);
+
+  curandState rng;
+  curand_init(rand_seed*gridDim.x+blockIdx.x, threadIdx.y*WARP_SIZE+threadIdx.x, 0, &rng);
+
+  while (out_row < last_row) {
+    const int64_t row = in_rows[out_row];
+    int64_t pos = adj_pos_map[row];
+    bool on_dev;
+    if(pos >= 0) {
+      on_dev = true;
+    } else {
+      assert(pos != -1);
+      on_dev = false;
+      pos = ENCODE_ID(pos);
+    }
+    const int64_t in_row_start = on_dev? in_ptr[pos]: uva_in_ptr[pos];
+    const int64_t out_row_start = out_ptr[out_row];
+    const int64_t deg = (on_dev? in_ptr[pos+1]: uva_in_ptr[pos+1]) - in_row_start;
+    const int64_t* index = (on_dev? in_index: uva_in_index) + in_row_start;
+
+    if (deg > 0) {
+      // each thread then blindly copies in rows only if deg > 0.
+      for (int idx = threadIdx.x; idx < num_picks; idx += blockDim.x) {
+        const int64_t edge = curand(&rng) % deg;
+        const int64_t out_idx = out_row_start+idx;
+        out_index[out_idx] = index[edge];
+        if (on_dev) {
+          profile_sampled_index[out_row * num_picks + idx] = edge + in_row_start;
+        } else {
+          profile_sampled_index[out_row * num_picks + idx] = ENCODE_ID(edge + in_row_start);
+        }
+      }
+    }
+    out_row += BLOCK_WARPS;
+  }
+}
+
 IdArray SampleNeighbors(IdArray frontier, int fanout) {
   auto* ds_context = DSContext::Global();
   auto dev_csr = ds_context->dev_graph;
@@ -260,11 +353,23 @@ IdArray SampleNeighbors(IdArray frontier, int fanout) {
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   const uint64_t random_seed = 7777777;
   if(grid.x > 0) {
-    _CSRRowWiseSampleReplaceKernelV2<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
-      random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), dev_csr.indptr.Ptr<IdType>(), dev_csr.indices.Ptr<IdType>(), uva_csr.indptr.Ptr<IdType>(), uva_csr.indices.Ptr<IdType>(), 
-      ds_context->adj_pos_map.Ptr<IdType>(),
-      edge_offset.Ptr<IdType>(), neighbors.Ptr<IdType>()
-    );
+    if (!ds_context->enable_profiler) {
+      _CSRRowWiseSampleReplaceKernelV2<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
+        random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), dev_csr.indptr.Ptr<IdType>(), dev_csr.indices.Ptr<IdType>(), uva_csr.indptr.Ptr<IdType>(), uva_csr.indices.Ptr<IdType>(), 
+        ds_context->adj_pos_map.Ptr<IdType>(),
+        edge_offset.Ptr<IdType>(), neighbors.Ptr<IdType>()
+      );
+    } else {
+      auto profile_sampled_index = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
+      _CSRRowWiseSampleReplaceKernelV2Profile<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
+        random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), dev_csr.indptr.Ptr<IdType>(), dev_csr.indices.Ptr<IdType>(), uva_csr.indptr.Ptr<IdType>(), uva_csr.indices.Ptr<IdType>(), 
+        ds_context->adj_pos_map.Ptr<IdType>(),
+        edge_offset.Ptr<IdType>(), neighbors.Ptr<IdType>(),
+        profile_sampled_index.Ptr<IdType>()
+      );
+      CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
+      ds_context->profiler->UpdateDSSamplingLocalCount(profile_sampled_index, fanout);
+    }
   }
   // CUDACHECK(cudaDeviceSynchronize());
   return neighbors;
@@ -356,10 +461,21 @@ void SampleNeighborsUVA(IdArray frontier, IdArray row_idx, CSRMatrix csr_mat, in
   const uint64_t random_seed = 7777777;
 
   if(grid.x > 0) {
-    _CSRRowWiseSampleReplaceKernel<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
-      random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), row_idx.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(),
-      edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>()
-    );
+    if(!DSContext::Global()->enable_profiler) {
+      _CSRRowWiseSampleReplaceKernel<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
+        random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), row_idx.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(),
+        edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>()
+      );
+    } else {
+      auto profile_sampled_index = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
+      _CSRRowWiseSampleReplaceKernelUVAProfile<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
+        random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), row_idx.Ptr<IdType>(), csr_mat.indices.Ptr<IdType>(),
+        edge_offset.Ptr<IdType>(), neighbors->Ptr<IdType>(),
+        profile_sampled_index.Ptr<IdType>()
+      );
+      CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
+      DSContext::Global()->profiler->UpdateUVASamplingCount(profile_sampled_index, fanout);
+    }
   }
 }
 

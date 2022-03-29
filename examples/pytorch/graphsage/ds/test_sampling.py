@@ -71,7 +71,7 @@ class NeighborSampler(object):
 
 def run(rank, args):
     setup(rank, args.n_ranks)
-    ds.init(rank, args.n_ranks, enable_comm_control=False)
+    ds.init(rank, args.n_ranks, enable_comm_control=False, enable_profiler=args.enable_profiler)
     
     # load partitioned graph
     start_ts = time.time()
@@ -154,6 +154,8 @@ def run(rank, args):
         print('Rank: ', rank, 'sampling time', sampling_time)
         if epoch >= skip_epoch:
             total += (toc - tic)
+    if args.enable_profiler:
+        dgl.ds.profiler_report(args.num_epochs)
 
     print("rank:", rank, "sampling time:", total/(args.num_epochs - skip_epoch))
     cleanup()
@@ -170,6 +172,8 @@ if __name__ == '__main__':
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=10, type=int, help='Epochs')
     parser.add_argument('--graph_cache_ratio', default=100, type=int, help='Ratio of edges cached in the GPU')
+    parser.add_argument('--enable_profiler', action='store_true',
+                           help='Profiler')
     args = parser.parse_args()
     
 

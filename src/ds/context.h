@@ -8,11 +8,12 @@
 #include <memory>
 #include <atomic>
 #include <dmlc/thread_local.h>
+#include <atomic>
+#include <vector>
 
 #include "coordinator.h"
 #include "./comm/comm_info.h"
-#include <atomic>
-#include <vector>
+#include "./profiler.h"
 
 using namespace dgl::runtime;
 using namespace dgl::aten;
@@ -65,6 +66,10 @@ struct DSContext {
 
   // Communication control
   bool enable_comm_control;
+
+  // Profiler
+  bool enable_profiler;
+  std::unique_ptr<Profiler> profiler;
 
   static DSContext* Global() {
     static DSContext instance;

@@ -84,6 +84,10 @@ NDArray LocalSubtensorsPartitionCacheSomeFeats(IdArray input_nodes, IdArray min_
   IdArray host_sorted_nodes = sorted_nodes.CreateView({n_input_nodes - n_dev_nodes}, sorted_nodes->dtype, n_dev_nodes * sorted_nodes->dtype.bits / 8);
   IdArray host_index = index.CreateView({n_input_nodes - n_dev_nodes}, index->dtype, n_dev_nodes * index->dtype.bits / 8);
 
+  if(context->enable_profiler) {
+    context->profiler->UpdateFeatCacheRate(n_dev_nodes, n_input_nodes - n_dev_nodes);
+  }
+
   IdArray ret_feats = IdArray::Empty({n_input_nodes * feat_dim}, dev_feats->dtype, dev_feats->ctx);
 
   // 2. Load device features
@@ -137,6 +141,10 @@ NDArray LocalSubtensorsReplicateCacheSomeFeats(IdArray input_nodes, IdArray min_
   // host nodes are shared feature indices
   IdArray host_sorted_nodes = sorted_nodes.CreateView({n_input_nodes - n_dev_nodes}, sorted_nodes->dtype, n_dev_nodes * sorted_nodes->dtype.bits / 8);
   IdArray host_index = index.CreateView({n_input_nodes - n_dev_nodes}, index->dtype, n_dev_nodes * index->dtype.bits / 8);
+
+  if(context->enable_profiler) {
+    context->profiler->UpdateFeatCacheRate(n_dev_nodes, n_input_nodes - n_dev_nodes);
+  }
 
   IdArray ret_feats = IdArray::Empty({n_input_nodes * feat_dim}, dev_feats->dtype, dev_feats->ctx);
 

@@ -25,8 +25,8 @@ class DummyOp(th.autograd.Function):
         _CAPI_DGLDSSetStream(s._as_parameter_, 0, 2)
         return grad_output
 
-def init(rank, world_size, thread_num=2, enable_kernel_control=False, enable_comm_control=True):
-    _CAPI_DGLDSInitialize(rank, world_size, thread_num, enable_kernel_control, enable_comm_control)
+def init(rank, world_size, thread_num=2, enable_kernel_control=False, enable_comm_control=True, enable_profiler=False):
+    _CAPI_DGLDSInitialize(rank, world_size, thread_num, enable_kernel_control, enable_comm_control, enable_profiler)
 
 # dgl thread local stream for both forward and backward threads
 def set_device_thread_local_stream(device, s):
@@ -46,6 +46,9 @@ def allgather_train_labels(labels):
     labels = F.to_dgl_nd(labels.long())
     labels = _CAPI_DGLDSAllgatherTrainLabels(labels)
     return F.from_dgl_nd(labels)
+
+def profiler_report(num_epochs):
+    _CAPI_DGLDSProfilerReport(num_epochs)
 
 
 
