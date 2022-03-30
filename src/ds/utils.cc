@@ -106,7 +106,7 @@ struct DSShmDLManagerCtx {
 };
 
 IdArray CreateShmArray(IdArray arr, const std::string& shm_name) {
-  void* host_ptr, *dev_ptr;
+  void* host_ptr = nullptr, *dev_ptr = nullptr;
 
   auto* ds_ctx = DSContext::Global();
   int rank = ds_ctx->rank;
@@ -115,12 +115,12 @@ IdArray CreateShmArray(IdArray arr, const std::string& shm_name) {
   size_t size = arr->shape[0];
   coor->Broadcast(size);
 
-  if(rank == 0) {
+  if(rank == 0 && size > 0) {
     ds_shm_open(shm_name.c_str(), size * arr->dtype.bits / 8, &host_ptr, &dev_ptr, create);
     memcpy(host_ptr, arr.Ptr<void>(), size * arr->dtype.bits / 8);
   }
   ds_ctx->coordinator->Barrier();
-  if(rank != 0) {
+  if(rank != 0 && size > 0) {
     ds_shm_open(shm_name.c_str(), size * arr->dtype.bits / 8, &host_ptr, &dev_ptr, create);
   }
   

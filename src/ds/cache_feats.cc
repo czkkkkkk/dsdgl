@@ -39,7 +39,7 @@ void PartitionCacheAllFeats(IdArray feats) {
  * @param ratio Cache ratio
  * @return
  */
-void PartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_degrees, int ratio) {
+void PartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_degrees, double ratio) {
   int n_local_nodes = feats->shape[0];
   int feat_dim = feats->shape[1];
   int n_dev_nodes = n_local_nodes * (ratio / 100.);
@@ -132,7 +132,7 @@ void PartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_de
  * @param ratio Cache ratio
  * @return
  */
-void ReplicateCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_degrees, int ratio) {
+void ReplicateCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_degrees, double ratio) {
   int n_local_nodes = feats->shape[0];
   int feat_dim = feats->shape[1];
   auto* ds_ctx = DSContext::Global();
@@ -203,7 +203,7 @@ DGL_REGISTER_GLOBAL("ds.cache._CAPI_DGLDSCacheFeats")
   } else if(feat_mode == "PartitionCache") {
     IdArray global_ids = args[2];
     IdArray local_degrees = args[3];
-    int ratio = args[4];
+    double ratio = args[4];
     LOG(INFO) << "Feature cache ratio: " << ratio;
     CHECK(global_ids->dtype.bits == 64);
     CHECK(local_degrees->dtype.bits == 64);
@@ -211,7 +211,7 @@ DGL_REGISTER_GLOBAL("ds.cache._CAPI_DGLDSCacheFeats")
   } else if(feat_mode == "ReplicateCache") {
     IdArray global_ids = args[2];
     IdArray local_degrees = args[3];
-    int ratio = args[4];
+    double ratio = args[4];
     LOG(INFO) << "Feature cache ratio: " << ratio;
     CHECK(global_ids->dtype.bits == 64);
     CHECK(local_degrees->dtype.bits == 64);

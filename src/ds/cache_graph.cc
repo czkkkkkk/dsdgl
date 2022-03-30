@@ -17,7 +17,7 @@ namespace ds {
 DGL_REGISTER_GLOBAL("ds.cache._CAPI_DGLDSCacheGraph")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   HeteroGraphRef hg = args[0];
-  int cache_ratio = args[1];
+  double cache_ratio = args[1];
   IdArray local_degrees = args[2];
   LOG(INFO) << "Cache graph ratio: " << cache_ratio;
   CSRMatrix mat = hg->GetCSRMatrix(0);
