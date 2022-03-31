@@ -55,7 +55,7 @@ void InitNcclComm(ncclComm_t *nccl_comm, DSContext *ds_context, int world_size, 
   ncclCommInitRank(nccl_comm, world_size, nccl_id, rank);
 }
 
-void Initialize(int rank, int world_size, int thread_num, bool enable_kernel_control, bool enable_comm_control) {
+void Initialize(int rank, int world_size, int thread_num, bool enable_kernel_control, bool enable_comm_control, bool enable_profiler) {
   LOG(INFO) << "Rank [" << rank << "] initializing DS context";
   auto* ds_context = DSContext::Global();
   ds_context->initialized = true;
@@ -99,6 +99,11 @@ void Initialize(int rank, int world_size, int thread_num, bool enable_kernel_con
 
   LOG(INFO) << "Rank " + std::to_string(rank) + " successfully builds nccl communicator";
 
+  ds_context->enable_profiler = enable_profiler;
+  if (enable_profiler) {
+    ds_context->profiler = std::unique_ptr<Profiler>(new Profiler());
+  }
+  LOG(INFO) << "Enable profiler? " << enable_profiler;
 }
 
 DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")
@@ -108,7 +113,8 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")
   int thread_num = args[2];
   bool enable_kernel_control = args[3];
   bool enable_comm_control = args[4];
-  Initialize(rank, world_size, thread_num, enable_kernel_control, enable_comm_control);
+  bool enable_profiler = args[5];
+  Initialize(rank, world_size, thread_num, enable_kernel_control, enable_comm_control, enable_profiler);
 });
 
 // Set dgl thread local stream
@@ -153,6 +159,13 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSAllgatherTrainLabels")
   }
   coor->Broadcast(flatten_labels);
   *rv = IdArray::FromVector(flatten_labels, labels->ctx);
+});
+
+DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSProfilerReport")
+.set_body([] (DGLArgs args, DGLRetValue *rv) {
+  int num_epochs = args[0];
+  CHECK(DSContext::Global()->enable_profiler);
+  DSContext::Global()->profiler->Report(num_epochs);
 });
 
 }

@@ -85,6 +85,10 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   
   IdArray send_sizes, send_offset;
   Cluster(rank, seeds, min_vids, world_size, &send_sizes, &send_offset);
+  if(context->enable_profiler) {
+    CUDACHECK(cudaStreamSynchronize(s));
+    context->profiler->UpdateDSSamplingNvlinkCount(send_offset, fanout);
+  }
 
   IdArray frontier, recv_offset;
   std::tie(frontier, recv_offset) = Alltoall(seeds, send_offset, 1, rank, world_size);
