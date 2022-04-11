@@ -221,6 +221,7 @@ def run(rank, args):
         process.memory_info().rss / 1e9))
     g = dgl.add_self_loop(g)
 
+    n_local_nodes = node_feats['_N/train_mask'].shape[0]
     if '_N/features' not in node_feats:
         print('Using fake features with feat dim: ', args.in_feats)
         node_feats['_N/features'] = th.ones(
@@ -245,7 +246,6 @@ def run(rank, args):
         rank, process.memory_info().rss / 1e9))
 
     num_vertices = gpb._max_node_ids[-1]
-    n_local_nodes = node_feats['_N/train_mask'].shape[0]
 
     print('Graph cache ratio {}, feature cache ratio {}'.format(
         args.graph_cache_ratio, args.cache_ratio))
