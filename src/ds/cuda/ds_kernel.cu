@@ -115,6 +115,7 @@ std::tuple<IdArray, IdArray, IdArray, IdArray> Partition(IdArray seeds, IdArray 
   IdArray part_offset = CumSum(part_sizes, true);
   IdArray sorted, index;
   std::tie(sorted, index) = MultiWayScan(seeds, part_offset, part_ids, world_size);
+  // std::tie(sorted, index) = Sort(seeds);
   return {sorted, index, part_sizes, part_offset};
 }
 
@@ -135,6 +136,7 @@ IdArray Partition(IdArray seeds, IdArray min_vids) {
   IdArray part_offset = CumSum(part_sizes, true);
   IdArray sorted, index;
   std::tie(sorted, index) = MultiWayScan(seeds, part_offset, part_ids, world_size);
+  // std::tie(sorted, index) = Sort(seeds);
   return sorted;
 }
 
@@ -375,12 +377,12 @@ IdArray SampleNeighbors(IdArray frontier, int fanout) {
   return neighbors;
 }
 
-void SampleNeighborsV2(IdArray frontier, CSRMatrix csr_mat, int fanout, IdArray* neighbors, IdArray* edges) {
+IdArray SampleNeighborsV2(IdArray frontier, CSRMatrix csr_mat, int fanout) {
   if(frontier->shape[0] == 0) {
-    *neighbors = NullArray(frontier->dtype, frontier->ctx);
+    return NullArray(frontier->dtype, frontier->ctx);
   } else {
     auto coo = CSRRowWiseSampling(csr_mat, frontier, fanout, NullArray(frontier->dtype, frontier->ctx));
-    *neighbors = coo.col;
+    return coo.col; 
   }
 }
 

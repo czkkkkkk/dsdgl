@@ -133,18 +133,6 @@ void Coordinator::Barrier() {
   }
   int val = RecvIntFromRoot();
   DCHECK_EQ(val, 1);
-  SendIntTo(-1, 2);
-  if (IsRoot()) {
-    for (int i = 0; i < n_peers_; ++i) {
-      int val = RootRecvInt();
-      DCHECK_EQ(val, 2);
-    }
-    for (int i = 0; i < n_peers_; ++i) {
-      SendIntTo(i, 3);
-    }
-  }
-  val = RecvIntFromRoot();
-  DCHECK_EQ(val, 3);
 }
 
 }

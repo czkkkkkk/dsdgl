@@ -26,6 +26,7 @@ from dgl.data import register_data_args, load_data
 import os
 
 from dgl.random import seed
+
 os.environ['DGLBACKEND'] = 'pytorch'
 
 
@@ -40,6 +41,12 @@ def setup(rank, world_size):
 def cleanup():
     dist.destroy_process_group()
 
+
+def compute_acc(pred, labels):
+    """
+    Compute the accuracy of prediction given the labels.
+    """
+    return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
 
 class NeighborSampler(object):
     def __init__(self, g, num_vertices, device_min_vids, device_min_eids, global_nid_map,
@@ -299,7 +306,7 @@ def run(rank, args):
         sampler,
         device=device,
         batch_size=args.batch_size,
-        shuffle=False,
+        shuffle=True,
         drop_last=False,
         num_workers=0)
 
@@ -373,6 +380,12 @@ def run(rank, args):
                 th.distributed.barrier()
             step += time.time() - begin
 
+            if i % args.log_every == 0 and rank == 0:
+                #acc = compute_acc(batch_pred, batch_labels)
+                acc = MF.accuracy(batch_pred, batch_labels)
+                print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | GPU {:.1f} MB'.format(
+                    epoch, i, loss.item(), acc.item(), th.cuda.max_memory_allocated() / 1000000))
+
         toc = time.time()
         if epoch >= skip_epoch:
             total += (toc - tic)
@@ -408,7 +421,7 @@ if __name__ == '__main__':
     parser.add_argument('--fan_out', default="5, 10, 15",
                         type=str, help='Fanout')
     parser.add_argument('--num_epochs', default=20, type=int, help='Epochs')
-    parser.add_argument('--lr', type=float, default=0.003)
+    parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--feat_mode', default='PartitionCache', type=str,
                         help='Feature cache mode. (AllCache, PartitionCache, ReplicateCache)')
     parser.add_argument('--cache_ratio', default=10, type=int,
@@ -421,6 +434,7 @@ if __name__ == '__main__':
                         help='Memory used to cache graph topology. Setting it not equal to -1 disables graph_cache_ratio')
     parser.add_argument('--feat_cache_gb', default=-1, type=int,
                         help='Memory used to cache features, Setting it not equal to -1 disables cache_ratio')
+    parser.add_argument('--log_every', default=5, type=int)
     args = parser.parse_args()
 
     mp.spawn(run,

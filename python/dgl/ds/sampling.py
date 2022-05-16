@@ -20,14 +20,15 @@ def sample_neighbors(g, num_vertices, device_min_vids, device_min_eids, nodes, f
     device_min_eids = F.to_dgl_nd(device_min_eids)
     nodes = F.to_dgl_nd(nodes)
     global_nid_map = F.to_dgl_nd(global_nid_map)
-    subgidx = _CAPI_DGLDSSampleNeighbors(None, num_vertices, device_min_vids, device_min_eids, nodes, 
+    rets = _CAPI_DGLDSSampleNeighbors(None, num_vertices, device_min_vids, device_min_eids, nodes, 
                                          fanout, edge_dir, prob_arrays, replace, global_nid_map, is_local)
-
+    subgidx = rets[0]
+    seeds = F.from_dgl_nd(rets[1])
     # src, dst, eid = subgidx.edges(0)
     # ret = graph((dst, src), num_nodes = num_vertices)
     # ret = ds_subgraph((dst, src), num_nodes = num_vertices)
-    ret = DGLHeteroGraph(subgidx)
-    return ret
+    subg = DGLHeteroGraph(subgidx)
+    return subg, seeds
 
 def rebalance_train_nids(train_nids, batch_size, global_nid_map):
     train_nids = F.to_dgl_nd(train_nids)

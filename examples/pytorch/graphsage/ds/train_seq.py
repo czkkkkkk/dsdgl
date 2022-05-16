@@ -20,6 +20,8 @@ import argparse
 import dgl.ndarray as nd
 from dgl.data import register_data_args, load_data
 import os
+import torchmetrics.functional as MF
+from ogb.nodeproppred import DglNodePropPredDataset
 
 from dgl.random import seed
 os.environ['DGLBACKEND'] = 'pytorch'
@@ -36,6 +38,27 @@ def setup(rank, world_size):
 
 def cleanup():
     dist.destroy_process_group()
+
+def compute_acc(pred, labels):
+    """
+    Compute the accuracy of prediction given the labels.
+    """
+    return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
+
+def evaluate(model, g, nfeat, labels, val_nid, device):
+    """
+    Evaluate the model on the validation set specified by ``val_nid``.
+    g : The entire graph.
+    inputs : The features of all the nodes.
+    labels : The labels of all the nodes.
+    val_nid : A node ID tensor indicating which nodes do we actually compute the accuracy for.
+    device : The GPU device to evaluate on.
+    """
+    model.eval()
+    with th.no_grad():
+        pred = model.inference(g, nfeat, device, args.batch_size, args.num_workers)
+    model.train()
+    return compute_acc(pred[val_nid], labels[val_nid])
 
 
 class NeighborSampler(object):
@@ -61,7 +84,7 @@ class NeighborSampler(object):
         for fanout in self.fanouts:
             # For each seed node, sample ``fanout`` neighbors.
             # No need to pass graph now
-            frontier = self.sample_neighbors(g, self.num_vertices,
+            frontier, seeds = self.sample_neighbors(g, self.num_vertices,
                                              self.device_min_vids, self.device_min_eids,
                                              seeds, fanout, self.global_nid_map, is_local=is_local)
 
@@ -69,6 +92,7 @@ class NeighborSampler(object):
             # Then we compact the frontier into a bipartite graph for message passing.
             block = dgl.to_block(
                 frontier, seeds, min_vids=self.device_min_vids)
+            # print('seeds: ', seeds, 'edges:', block.edges(), ' frontiers: ', block.srcdata[dgl.NID])
             # block = ds.to_block(frontier, seeds)
             # Obtain the seed nodes for next layer.
             seeds = block.srcdata[dgl.NID]
@@ -117,7 +141,6 @@ class Sampler(Thread):
     def run(self):
         th.cuda.set_device(self.rank)
         s = th.cuda.Stream(device=self.rank)
-        print('cuda stream', s)
         dgl.ds.set_thread_local_stream(s)
         with th.cuda.stream(s):
             for i in range(self.num_epochs):
@@ -130,6 +153,7 @@ class Sampler(Thread):
                     sample_ts = time.time()
                     batch_inputs, batch_labels = dgl.ds.load_subtensor(
                         self.labels, input_nodes, seeds, self.min_vids, self.feat_dim)
+                    # batch_inputs = th.full(batch_inputs.shape, 0.5, dtype=batch_inputs.dtype, device=batch_inputs.device)
                     s.synchronize()
                     load_ts = time.time()
                     self.pc_queue.put((batch_inputs, batch_labels, blocks))
@@ -153,14 +177,17 @@ def run(rank, args):
     setup(rank, args.n_ranks)
     ds.init(rank, args.n_ranks)
 
+
     print('Rank {}, Host memory usage before load partition: {} GB'.format(
         rank, process.memory_info().rss / 1e9))
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(
         args.part_config, rank)
+
     print('Rank {}, Host memory usage after load partition: {} GB'.format(
         rank, process.memory_info().rss / 1e9))
     g = dgl.add_self_loop(g)
+    # g = dgl.to_homogeneous(g)
     num_vertices = gpb._max_node_ids[-1]
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
     if '_N/features' not in node_feats:
@@ -180,18 +207,44 @@ def run(rank, args):
     print('Rank {}, Host memory usage after cache feats: {} GB'.format(
         rank, process.memory_info().rss / 1e9))
 
-    print('rank {}, # global: {}, # local: {}'.format(
-        rank, num_vertices, n_local_nodes))
+    print('rank {}, # global: {}, # local: {}, # Edges {}'.format(
+        rank, num_vertices, n_local_nodes, g.number_of_edges()))
     print('# in feats:', in_feats)
     train_nid = th.masked_select(
         g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
+    print("rank", rank, train_nid)
     train_nid = dgl.ds.rebalance_train_nids(
         train_nid, args.batch_size, g.ndata[dgl.NID])
+    print("rank", rank, train_nid)
+    print('Rank {}, # train nids {}'.format(rank, train_nid.shape[0]))
+    # train_nid = dgl.ds.rebalance_train_nids(
+    #     train_nid, args.batch_size, g.ndata[dgl.NID])
 
     train_label = dgl.ds.allgather_train_labels(node_feats['_N/labels'])
     n_classes = len(
         th.unique(train_label[th.logical_not(th.isnan(train_label))]))
-    print('#labels:', n_classes)
+    
+    print('---------random shuffle---------')
+    part_prefix = [0, 314220, 615684, 924251, 1237072, 1542218, 1842743, 2144254, 2449029]
+    all_train_nid = dgl.ds.allgather_train_labels(train_nid)
+    all_train_nid = th.sort(all_train_nid)[0]
+    # train_nid = all_train_nid.split(all_train_nid.size(0) // args.n_ranks)[rank]
+    old_id = g.ndata['orig_id']
+    org_id = []
+    flag = 0
+    for i in all_train_nid:
+        if i >= part_prefix[rank] and i < part_prefix[rank + 1]:
+            org_id.append(old_id[i - part_prefix[rank]])
+            flag = 1
+        else:
+            if flag == 1:
+                break
+    org_nid = dgl.ds.allgather_train_labels(th.tensor(org_id))
+    idx = th.sort(org_nid)[1]
+    all_train_nid = all_train_nid[idx]
+    train_nid = all_train_nid.split(all_train_nid.size(0) // args.n_ranks)[rank]
+    print(num_vertices)
+    print('------------------')
 
     # print('# batch: ', train_nid.size()[0] / args.batch_size)
     th.distributed.barrier()
@@ -201,6 +254,8 @@ def run(rank, args):
     print('Rank {}, Host memory usage before create format: {} GB'.format(
         rank, process.memory_info().rss / 1e9))
     train_g = g.reverse().formats(['csr'])
+    # train_g = g.formats(['csr'])
+    print('train_g nid', train_g.ndata[dgl.NID])
     g = None
     print('Rank {}, Host memory usage after create format: {} GB'.format(
         rank, process.memory_info().rss / 1e9))
@@ -224,15 +279,38 @@ def run(rank, args):
                               fanout,
                               dgl.ds.sample_neighbors, device)
 
-    dataloader = dgl.dataloading.NodeDataLoader(
-        train_g,
-        train_nid,
-        sampler,
-        device=device,
-        batch_size=args.batch_size,
-        shuffle=False,
-        drop_last=False,
-        num_workers=0)
+    
+    # train_nid = train_nid.cpu()
+    # host_global_nid_map = global_nid_map.cpu()
+    # host_train_nids = []
+    # for i in range(args.num_epochs):
+    #     if i == 0:
+    #         host_train_nids.append(dgl.ds.rebalance_train_nids(
+    #             train_nid, args.batch_size, host_global_nid_map))
+    #     else:
+    #         host_train_nids.append(dgl.ds.rebalance_train_nids(
+    #             train_nid, args.batch_size, host_global_nid_map))
+    #         # host_train_nids.append(host_train_nids[0])
+
+    # def dataloader_builder(epoch):
+    #     nonlocal host_train_nids
+    #     nonlocal args
+    #     nonlocal host_global_nid_map
+    #     nonlocal device
+    #     nonlocal train_g
+    #     nonlocal sampler
+    #     dataloader = dgl.dataloading.NodeDataLoader(
+    #         train_g,
+    #         host_train_nids[epoch].to(device),
+    #         sampler,
+    #         device=device,
+    #         batch_size=args.batch_size,
+    #         shuffle=False,
+    #         drop_last=False,
+    #         use_ddp=False,
+    #         num_workers=0)
+    #     return dataloader
+
 
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes,
@@ -241,7 +319,8 @@ def run(rank, args):
     if args.n_ranks > 1:
         model = DDP(model, device_ids=[rank], output_device=rank)
     loss_fcn = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    # optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=5e-4)
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     th.distributed.barrier()
     stop_epoch = -1
@@ -249,6 +328,18 @@ def run(rank, args):
     skip_epoch = 3
     data_buffer = SequentialQueue()
     gpu_monitor = GPUMonitor(rank)
+
+    train_nid = train_nid.to(rank)
+    dataloader = dgl.dataloading.NodeDataLoader(
+            train_g,
+            train_nid,
+            sampler,
+            device=device,
+            batch_size=args.batch_size,
+            shuffle=True,
+            drop_last=False,
+            num_workers=0)
+
     sample_worker = Sampler(dataloader, train_label, min_vids,
                             data_buffer, in_feats, rank, args.num_epochs)
 
@@ -263,6 +354,7 @@ def run(rank, args):
         tic = time.time()
 
         training_time = 0
+        i = 0
         while True:
             batch_data = data_buffer.get()
             # print('buffer size:', data_buffer.buffer.qsize())
@@ -283,9 +375,23 @@ def run(rank, args):
                 optimizer.step()
 
                 s.synchronize()
-            data_buffer.release_lock()
             end_ts = time.time()
             training_time += end_ts - start_ts
+
+
+            if i % args.log_every == 0:
+                acc = MF.accuracy(batch_pred, batch_labels)
+                acc = acc.reshape([-1]).cpu()
+                loss = loss.reshape([-1]).cpu()
+                dist.all_reduce(acc)
+                acc /= args.n_ranks
+                dist.all_reduce(loss)
+                loss /= args.n_ranks
+                if rank == 0:
+                    print('Rank {:01d} | Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | GPU {:.1f} MB'.format(
+                        rank, epoch, i, loss.item(), acc.item(), th.cuda.max_memory_allocated() / 1000000))
+            i += 1
+            data_buffer.release_lock()
 
         toc = time.time()
         if epoch >= skip_epoch:
@@ -310,7 +416,7 @@ if __name__ == '__main__':
                         type=int, help='Number of ranks')
     parser.add_argument('--batch_size', default=1024,
                         type=int, help='Batch size')
-    parser.add_argument('--num_hidden', default=16,
+    parser.add_argument('--num_hidden', default=256,
                         type=int, help='Hidden size')
     parser.add_argument('--dropout', type=float, default=0.5)
     parser.add_argument('--fan_out', default="25,10", type=str, help='Fanout')
@@ -324,7 +430,15 @@ if __name__ == '__main__':
                         type=int, help='Ratio of edges cached in the GPU')
     parser.add_argument('--in_feats', default=256, type=int,
                         help='In feature dimension used when the graph do not have feature')
+    parser.add_argument('--log_every', default=20, type=int)
     args = parser.parse_args()
+    # args.batch_size = args.batch_size // args.n_ranks
+
+    # dataset = DglNodePropPredDataset(name='ogbn-products', root='/data/ogb/')
+    # graph, labels = dataset[0]
+    # graph.ndata['feat'] = graph.ndata['feat']
+    # graph.ndata['label'] = labels
+    # split_idx = dataset.get_idx_split()
 
     mp.spawn(run,
              args=(args, ),

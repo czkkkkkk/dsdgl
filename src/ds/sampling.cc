@@ -51,7 +51,7 @@ void Show(IdArray array, int rank) {
 
 DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
-  // HeteroGraphRef hg = args[0];
+  HeteroGraphRef hg = args[0];
   IdType num_vertices = args[1];
   IdArray min_vids = args[2];
   IdArray min_eids = args[3];
@@ -101,7 +101,11 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
 
   HeteroGraphPtr subg = CreateCOO(num_vertices, seeds, fanout, reshuffled_neighbors);
   
-  *rv = HeteroGraphRef(subg);
+  List<ObjectRef> ret;
+  ret.push_back(HeteroGraphRef(subg));
+  ret.push_back(Value(MakeValue(seeds)));
+  *rv = ret;
+  // *rv = HeteroGraphRef(subg);
   CUDACHECK(cudaStreamSynchronize(s));
 });
 
@@ -117,6 +121,19 @@ IdArray ToGlobal(IdArray nids, IdArray global_nid_map) {
     ret_ptr[i] = global_nid_map_ptr[nids_ptr[i]];
   }
   return ret;
+}
+
+void ToGlobalInplace(IdArray nids, IdArray global_nid_map) {
+  CHECK(nids->ctx.device_type == kDLCPU);
+  CHECK(global_nid_map->ctx.device_type == kDLCPU);
+  IdType length = nids->shape[0];
+  IdArray ret = IdArray::Empty({length}, nids->dtype, nids->ctx);
+  IdType* ret_ptr = ret.Ptr<IdType>();
+  IdType* nids_ptr = nids.Ptr<IdType>();
+  IdType* global_nid_map_ptr = global_nid_map.Ptr<IdType>();
+  for(int i = 0; i < length; ++i) {
+    nids_ptr[i] = global_nid_map_ptr[nids_ptr[i]];
+  }
 }
 
 IdArray Rebalance(IdArray ids, int batch_size, Coordinator* coor) {
@@ -159,6 +176,49 @@ IdArray Rebalance(IdArray ids, int batch_size, Coordinator* coor) {
   return NDArray::FromVector(ret);
 }
 
+IdArray RebalanceSimple(IdArray ids, int batch_size, Coordinator* coor) {
+  auto ids_vec = ids.ToVector<int64_t>();
+  auto vecs = coor->Gather(ids_vec);
+  if(coor->IsRoot()) {
+    int total = 0;
+    int min_size = vecs[0].size();
+    for (const auto& vec: vecs) {
+      total += vec.size();
+      min_size = std::min(min_size, (int)vecs[0].size());
+    }
+    min_size = min_size - min_size % batch_size;
+    for(auto& vec: vecs) {
+      vec.resize(min_size);
+    }
+    for(auto& vec: vecs) {
+      std::random_shuffle(vec.begin(), vec.end());
+    }
+  }
+  auto ret = coor->Scatter(vecs);
+  return NDArray::FromVector(ret);
+}
+
+IdArray RebalanceRandom(IdArray ids, int batch_size, Coordinator* coor) {
+  auto ids_vec = ids.ToVector<int64_t>();
+  auto vecs = coor->Gather(ids_vec);
+  if(coor->IsRoot()) {
+    int total = 0;
+    for (const auto& vec: vecs) {
+      total += vec.size();
+    }
+    int world_size = coor->GetWorldSize();
+    auto flatten = Flatten(vecs);
+    std::random_shuffle(flatten.begin(), flatten.end());
+    int size_per_rank = total / world_size;
+    flatten.resize(size_per_rank * world_size);
+    for(int i = 0; i < world_size; ++i) {
+      vecs[i] = std::vector<int64_t>(flatten.begin() + i * size_per_rank, flatten.begin() + (i + 1) * size_per_rank);
+    }
+  }
+  auto ret = coor->Scatter(vecs);
+  return NDArray::FromVector(ret);
+}
+
 /**
  * @brief Rebalance local node ids of all ranks so that each rank have
  * the same number of node ids. It may drop some node ids to keep balance.
@@ -178,7 +238,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSRebalanceNIds")
   IdArray global_nids = ToGlobal(nids, global_nid_map);
   LOG(INFO) << "Rank: " << DSContext::Global()->rank << ", # train ids before rebalance: " << nids->shape[0];
   auto* coor = DSContext::Global()->coordinator.get();
-  auto ret = Rebalance(global_nids, batch_size, coor);
+  auto ret = RebalanceRandom(global_nids, batch_size, coor);
   *rv = ret;
 });
 
@@ -189,7 +249,8 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSCSRToGlobalId")
   assert(hg->NumEdgeTypes() == 1);
   dgl_type_t etype = 0;
   CSRMatrix csr_mat = hg->GetCSRMatrix(etype);
-  csr_mat.indices = ToGlobal(csr_mat.indices, global_nid_map);
+  // csr_mat.indices = ToGlobal(csr_mat.indices, global_nid_map);
+  ToGlobalInplace(csr_mat.indices, global_nid_map);
   *rv = hg;
 });
 

@@ -4,6 +4,8 @@
 #include <memory>
 #include <vector>
 #include <dmlc/logging.h>
+#include <chrono>
+#include <thread>
 
 #include "zmq.hpp"
 
@@ -12,7 +14,7 @@
 namespace dgl {
 namespace ds {
 
-enum CommEvent { Allgather = 0, Scatter = 1, Gather = 2, Broadcast = 3, RingExchange = 4 };
+enum CommEvent { Allgather = 0, Scatter = 1, Gather = 2, Broadcast = 3, RingExchange = 4, CommEnd = 5 };
 
 struct ProcInfo {
   int pid;
@@ -121,6 +123,37 @@ class Coordinator {
       }
     }
     Barrier();
+    return ret;
+  }
+
+  template <typename T>
+  std::vector<std::vector<T>> GatherLargeVector(const std::vector<T>& vec) {
+    constexpr size_t per_block_size = 100000000;
+    std::vector<std::vector<T>> ret(n_peers_);
+    std::vector<size_t> sizes = Gather(vec.size());
+    size_t round = 0;
+    if(IsRoot()) {
+      size_t max_size = 0;
+      for(auto v: sizes) {
+        max_size = std::max(max_size, v);
+      }
+      round = (max_size + per_block_size - 1) / per_block_size;
+    }
+    Broadcast(round);
+    for(size_t i = 0; i < round; ++i) {
+      size_t start = i * per_block_size;
+      size_t end = std::min(start + per_block_size, vec.size());
+      std::vector<T> to_send;
+      if(start < end) {
+        to_send = std::vector<T>(vec.begin() + start, vec.begin() + end);
+      }
+      auto recvs = Gather(to_send);
+      if(IsRoot()) {
+        for(int i = 0; i < n_peers_; ++i) {
+          ret[i].insert(ret[i].end(), recvs[i].begin(), recvs[i].end());
+        }
+      }
+    }
     return ret;
   }
 
