@@ -62,6 +62,8 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   const bool replace = args[8];
   IdArray global_nid_map = args[9];
   const bool is_local = args[10];
+  const bool bias = args[11];
+  IdArray weight = args[12];
   auto* context = DSContext::Global();
   CHECK(context->graph_loaded);
 
@@ -94,7 +96,7 @@ DGL_REGISTER_GLOBAL("ds.sampling._CAPI_DGLDSSampleNeighbors")
   std::tie(frontier, recv_offset) = Alltoall(seeds, send_offset, 1, rank, world_size);
 
   ConvertGidToLid(frontier, min_vids, rank);
-  auto neighbors = SampleNeighbors(frontier, fanout);
+  auto neighbors = SampleNeighbors(frontier, fanout, weight, bias);
   
   IdArray reshuffled_neighbors, reshuffle_recv_offset;
   std::tie(reshuffled_neighbors, reshuffle_recv_offset) = Alltoall(neighbors, recv_offset, fanout, rank, world_size, send_offset);

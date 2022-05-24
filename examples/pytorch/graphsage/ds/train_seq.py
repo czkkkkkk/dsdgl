@@ -224,27 +224,27 @@ def run(rank, args):
     n_classes = len(
         th.unique(train_label[th.logical_not(th.isnan(train_label))]))
     
-    print('---------random shuffle---------')
-    part_prefix = [0, 314220, 615684, 924251, 1237072, 1542218, 1842743, 2144254, 2449029]
-    all_train_nid = dgl.ds.allgather_train_labels(train_nid)
-    all_train_nid = th.sort(all_train_nid)[0]
+    # print('---------random shuffle---------')
+    # part_prefix = [0, 314220, 615684, 924251, 1237072, 1542218, 1842743, 2144254, 2449029]
+    # all_train_nid = dgl.ds.allgather_train_labels(train_nid)
+    # all_train_nid = th.sort(all_train_nid)[0]
+    # # train_nid = all_train_nid.split(all_train_nid.size(0) // args.n_ranks)[rank]
+    # old_id = g.ndata['orig_id']
+    # org_id = []
+    # flag = 0
+    # for i in all_train_nid:
+    #     if i >= part_prefix[rank] and i < part_prefix[rank + 1]:
+    #         org_id.append(old_id[i - part_prefix[rank]])
+    #         flag = 1
+    #     else:
+    #         if flag == 1:
+    #             break
+    # org_nid = dgl.ds.allgather_train_labels(th.tensor(org_id))
+    # idx = th.sort(org_nid)[1]
+    # all_train_nid = all_train_nid[idx]
     # train_nid = all_train_nid.split(all_train_nid.size(0) // args.n_ranks)[rank]
-    old_id = g.ndata['orig_id']
-    org_id = []
-    flag = 0
-    for i in all_train_nid:
-        if i >= part_prefix[rank] and i < part_prefix[rank + 1]:
-            org_id.append(old_id[i - part_prefix[rank]])
-            flag = 1
-        else:
-            if flag == 1:
-                break
-    org_nid = dgl.ds.allgather_train_labels(th.tensor(org_id))
-    idx = th.sort(org_nid)[1]
-    all_train_nid = all_train_nid[idx]
-    train_nid = all_train_nid.split(all_train_nid.size(0) // args.n_ranks)[rank]
-    print(num_vertices)
-    print('------------------')
+    # print(num_vertices)
+    # print('------------------')
 
     # print('# batch: ', train_nid.size()[0] / args.batch_size)
     th.distributed.barrier()
@@ -279,39 +279,6 @@ def run(rank, args):
                               fanout,
                               dgl.ds.sample_neighbors, device)
 
-    
-    # train_nid = train_nid.cpu()
-    # host_global_nid_map = global_nid_map.cpu()
-    # host_train_nids = []
-    # for i in range(args.num_epochs):
-    #     if i == 0:
-    #         host_train_nids.append(dgl.ds.rebalance_train_nids(
-    #             train_nid, args.batch_size, host_global_nid_map))
-    #     else:
-    #         host_train_nids.append(dgl.ds.rebalance_train_nids(
-    #             train_nid, args.batch_size, host_global_nid_map))
-    #         # host_train_nids.append(host_train_nids[0])
-
-    # def dataloader_builder(epoch):
-    #     nonlocal host_train_nids
-    #     nonlocal args
-    #     nonlocal host_global_nid_map
-    #     nonlocal device
-    #     nonlocal train_g
-    #     nonlocal sampler
-    #     dataloader = dgl.dataloading.NodeDataLoader(
-    #         train_g,
-    #         host_train_nids[epoch].to(device),
-    #         sampler,
-    #         device=device,
-    #         batch_size=args.batch_size,
-    #         shuffle=False,
-    #         drop_last=False,
-    #         use_ddp=False,
-    #         num_workers=0)
-    #     return dataloader
-
-
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes,
                  len(fanout), th.relu, args.dropout)
@@ -320,7 +287,7 @@ def run(rank, args):
         model = DDP(model, device_ids=[rank], output_device=rank)
     loss_fcn = nn.CrossEntropyLoss()
     # optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=5e-4)
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=0.003)
 
     th.distributed.barrier()
     stop_epoch = -1
@@ -379,17 +346,17 @@ def run(rank, args):
             training_time += end_ts - start_ts
 
 
-            if i % args.log_every == 0:
-                acc = MF.accuracy(batch_pred, batch_labels)
-                acc = acc.reshape([-1]).cpu()
-                loss = loss.reshape([-1]).cpu()
-                dist.all_reduce(acc)
-                acc /= args.n_ranks
-                dist.all_reduce(loss)
-                loss /= args.n_ranks
-                if rank == 0:
-                    print('Rank {:01d} | Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | GPU {:.1f} MB'.format(
-                        rank, epoch, i, loss.item(), acc.item(), th.cuda.max_memory_allocated() / 1000000))
+            # if i % args.log_every == 0:
+            #     acc = MF.accuracy(batch_pred, batch_labels)
+            #     acc = acc.reshape([-1]).cpu()
+            #     loss = loss.reshape([-1]).cpu()
+            #     dist.all_reduce(acc)
+            #     acc /= args.n_ranks
+            #     dist.all_reduce(loss)
+            #     loss /= args.n_ranks
+            #     if rank == 0:
+            #         print('Rank {:01d} | Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | GPU {:.1f} MB'.format(
+            #             rank, epoch, i, loss.item(), acc.item(), th.cuda.max_memory_allocated() / 1000000))
             i += 1
             data_buffer.release_lock()
 
@@ -430,7 +397,7 @@ if __name__ == '__main__':
                         type=int, help='Ratio of edges cached in the GPU')
     parser.add_argument('--in_feats', default=256, type=int,
                         help='In feature dimension used when the graph do not have feature')
-    parser.add_argument('--log_every', default=20, type=int)
+    parser.add_argument('--log_every', default=10, type=int)
     args = parser.parse_args()
     # args.batch_size = args.batch_size // args.n_ranks
 
