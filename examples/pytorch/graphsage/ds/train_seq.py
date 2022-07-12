@@ -188,7 +188,7 @@ def run(rank, args):
         rank, process.memory_info().rss / 1e9))
     g = dgl.add_self_loop(g)
     # g = dgl.to_homogeneous(g)
-    num_vertices = gpb._max_node_ids[-1]
+    num_vertices = int(gpb._max_node_ids[-1])
     n_local_nodes = node_feats['_N/train_mask'].shape[0]
     if '_N/features' not in node_feats:
         print('Using fake features with feat dim: ', args.in_feats)
@@ -338,6 +338,7 @@ def run(rank, args):
                 batch_pred = model(blocks, batch_inputs)
                 loss = loss_fcn(batch_pred, batch_labels)
                 optimizer.zero_grad()
+                s.synchronize()
                 loss.backward()
                 optimizer.step()
 

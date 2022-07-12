@@ -253,7 +253,7 @@ def run(rank, args):
     print('Rank {}, Host memory usage after cache feats: {} GB'.format(
         rank, process.memory_info().rss / 1e9))
 
-    num_vertices = gpb._max_node_ids[-1]
+    num_vertices = int(gpb._max_node_ids[-1])
 
     print('Graph cache ratio {}, feature cache ratio {}'.format(
         args.graph_cache_ratio, args.cache_ratio))
@@ -333,7 +333,7 @@ def run(rank, args):
     stop_epoch = -1
     total = 0
     skip_epoch = 5
-    sample_data_buffer = MPMCQueue(3, sampler_number, loader_number)
+    sample_data_buffer = MPMCQueue(1, sampler_number, loader_number)
     # sample_data_buffer = MPMCQueue_simple(10, sampler_number, loader_number)
     subtensor_data_buffer = MPMCQueue(1, loader_number, 1)
     # subtensor_data_buffer = PCQueue(10)

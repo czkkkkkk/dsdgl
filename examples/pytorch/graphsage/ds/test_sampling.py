@@ -34,6 +34,11 @@ def setup(rank, world_size):
 def cleanup():
     dist.destroy_process_group()
 
+def calculate_ratio(gb, size, entry_size_in_byte):
+    n_cached = gb * 1024 * 1024 * 1024 / entry_size_in_byte
+    ret = n_cached / size * 100
+    return min(100., ret)
+
 class NeighborSampler(object):
     def __init__(self, g, num_vertices, device_min_vids, device_min_eids, global_nid_map, 
                     fanouts, sample_neighbors, device, load_feat=True, weight=None, is_bias=False):
@@ -73,7 +78,7 @@ class NeighborSampler(object):
 
 def run(rank, args):
     setup(rank, args.n_ranks)
-    ds.init(rank, args.n_ranks)
+    ds.init(rank, args.n_ranks, enable_comm_control=False)
     
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
@@ -97,18 +102,24 @@ def run(rank, args):
     train_g = dgl.ds.csr_to_global_id(train_g, train_g.ndata[dgl.NID])
     index = train_g.adj_sparse('csr')[0]
     adj = train_g.adj_sparse('csr')[1]
-    weights = th.ones(adj.shape, dtype=th.int32)
+    # weights = th.ones(adj.shape, dtype=th.int32)
+    weights = None
     num_vertices = index.shape[0] - 1
     print(num_vertices)
     print("rank", rank, index)
+    '''
     for i in range(num_vertices):
         offset = index[i]
         degree = index[i + 1] - offset
         weights[offset: offset + degree] = th.arange(0, degree, dtype=th.int32)
     weights = F.tensor(weights, dtype=F.int32).to(device)
+    '''
     th.cuda.synchronize()
     print("rank", rank, weights)
-    print("rank", rank, weights.shape)
+    # print("rank", rank, weights.shape)
+    if args.graph_cache_gb != -1:
+        args.graph_cache_ratio = calculate_ratio(
+            args.graph_cache_gb, g.number_of_edges(), 8)
     dgl.ds.cache_graph(train_g, args.graph_cache_ratio)
     global_nid_map = train_g.ndata[dgl.NID].to(device)
     train_g = None
@@ -118,13 +129,14 @@ def run(rank, args):
     min_eids = [0] + list(gpb._max_edge_ids)
     min_eids = F.tensor(min_eids, dtype=F.int64).to(device)
 
+
     fanout = [int(fanout) for fanout in args.fan_out.split(',')]
     sampler = NeighborSampler(train_g, num_vertices,
                               min_vids,
                               min_eids,
                               global_nid_map,
                               fanout,
-                              dgl.ds.sample_neighbors, device, weight=weights, is_bias=True)
+                              dgl.ds.sample_neighbors, device, weight=weights, is_bias=False)
 
     dataloader = dgl.dataloading.NodeDataLoader(
         train_g,
@@ -152,12 +164,12 @@ def run(rank, args):
         th.distributed.barrier()
         toc = time.time()
         if rank == 0:
-            print('Rank: ', rank, 'sampling time', toc - tic)
+            print('Rank: ', rank, 'world_size: ', args.n_ranks, 'sampling time', toc - tic)
         if epoch >= skip_epoch:
             total += (toc - tic)
 
     if rank == 0:
-        print("rank:", rank, "sampling time:", total/(args.num_epochs - skip_epoch))
+        print("rank:", rank, 'world_size: ', args.n_ranks, "sampling time:", total/(args.num_epochs - skip_epoch))
     cleanup()
   
 
@@ -175,10 +187,8 @@ if __name__ == '__main__':
     parser.add_argument('--graph_cache_ratio', default=100, type=int, help='Ratio of edges cached in the GPU')
     parser.add_argument('--enable_profiler', action='store_true',
                            help='Profiler')
-    parser.add_argument('--num_hidden', default=256,
-                        type=int, help='Hidden size')
-    parser.add_argument('--feat_mode', default='AllCache', type=str,
-                        help='Feature cache mode. (AllCache, PartitionCache, ReplicateCache)')
+    parser.add_argument('--graph_cache_gb', default=-1, type=int,
+                        help='Memory used to cache graph topology. Setting it not equal to -1 disables graph_cache_ratio')
     args = parser.parse_args()
     
 
