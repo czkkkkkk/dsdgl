@@ -12,6 +12,9 @@ from friendster import FriendSterDataset
 from dgl.data.utils import generate_mask_tensor
 from dgl.convert import to_homogeneous
 import psutil
+import scipy.sparse as sp
+from scipy.sparse import coo_matrix
+from dgl.convert import from_scipy
 
 def load_mag240m(path='/data/dgl/mag240m'):
     '''
@@ -82,6 +85,27 @@ def loadTW():
     graph.ndata['test_mask'] = generate_mask_tensor(test_mask)
     return graph
 
+def buildFakeGraph():
+    n_nodes = 9
+    row = np.array([0, 0, 1, 2, 2, 3, 3, 3, 4, 6, 7])
+    col = np.array([5, 4, 3, 2, 8, 4, 5, 6, 5, 8, 8])
+    node_types = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0])
+    coo = coo_matrix((np.zeros_like(row), (row, col)), shape=(n_nodes, n_nodes))
+    graph = from_scipy(coo)
+    graph = dgl.to_bidirected(graph)
+    graph = dgl.to_simple(graph)
+    graph.ndata['node_type'] = th.tensor(node_types, dtype=th.int32)
+    node_types = graph.ndata['node_type'].numpy()
+    train_mask = (node_types == 0)
+    val_mask = (node_types == 1)
+    test_mask = (node_types == 2)
+    graph.ndata['train_mask'] = generate_mask_tensor(train_mask)
+    graph.ndata['val_mask'] = generate_mask_tensor(val_mask)
+    graph.ndata['test_mask'] = generate_mask_tensor(test_mask)
+    return graph
+
+
+
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser("Partition builtin graphs")
     argparser.add_argument('--dataset', type=str, default='reddit',
@@ -120,6 +144,8 @@ if __name__ == '__main__':
         g = loadFS()
     elif args.dataset == 'twitter':
         g = loadTW()
+    elif args.dataset == 'fake':
+        g = buildFakeGraph()
 
     print('load {} takes {:.3f} seconds'.format(args.dataset, time.time() - start))
     print('|V|={}, |E|={}'.format(g.number_of_nodes(), g.number_of_edges()))

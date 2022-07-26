@@ -21,11 +21,13 @@ import torch.distributed as dist
 import dgl
 import torch as th
 import argparse
+import torchmetrics.functional as MF
 import dgl.ndarray as nd
 from dgl.data import register_data_args, load_data
 import os
 
 from dgl.random import seed
+
 os.environ['DGLBACKEND'] = 'pytorch'
 
 
@@ -40,6 +42,12 @@ def setup(rank, world_size):
 def cleanup():
     dist.destroy_process_group()
 
+
+def compute_acc(pred, labels):
+    """
+    Compute the accuracy of prediction given the labels.
+    """
+    return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
 
 class NeighborSampler(object):
     def __init__(self, g, num_vertices, device_min_vids, device_min_eids, global_nid_map,
@@ -63,7 +71,7 @@ class NeighborSampler(object):
         is_local = True
         for fanout in self.fanouts:
             # For each seed node, sample ``fanout`` neighbors.
-            frontier = self.sample_neighbors(self.g, self.num_vertices,
+            frontier, seeds = self.sample_neighbors(self.g, self.num_vertices,
                                              self.device_min_vids, self.device_min_eids,
                                              seeds, fanout, self.global_nid_map,
                                              is_local=is_local)
@@ -245,7 +253,7 @@ def run(rank, args):
     print('Rank {}, Host memory usage after cache feats: {} GB'.format(
         rank, process.memory_info().rss / 1e9))
 
-    num_vertices = gpb._max_node_ids[-1]
+    num_vertices = int(gpb._max_node_ids[-1])
 
     print('Graph cache ratio {}, feature cache ratio {}'.format(
         args.graph_cache_ratio, args.cache_ratio))
@@ -299,7 +307,7 @@ def run(rank, args):
         sampler,
         device=device,
         batch_size=args.batch_size,
-        shuffle=False,
+        shuffle=True,
         drop_last=False,
         num_workers=0)
 
@@ -324,7 +332,7 @@ def run(rank, args):
     th.distributed.barrier()
     stop_epoch = -1
     total = 0
-    skip_epoch = 3
+    skip_epoch = 5
     sample_data_buffer = MPMCQueue(1, sampler_number, loader_number)
     # sample_data_buffer = MPMCQueue_simple(10, sampler_number, loader_number)
     subtensor_data_buffer = MPMCQueue(1, loader_number, 1)
@@ -351,7 +359,11 @@ def run(rank, args):
         load_workers[i].start()
 
     monitor = GPUMonitor(rank)
+    time_array = []
+    acc_array = []
+    loss_array = []
     train_time = 0
+    time_begin = time.time()
     for epoch in range(args.num_epochs):
         if epoch == skip_epoch:
             monitor.start()
@@ -373,12 +385,30 @@ def run(rank, args):
                 th.distributed.barrier()
             step += time.time() - begin
 
+            # if i % args.log_every == 0:
+            #     #acc = compute_acc(batch_pred, batch_labels)
+            #     time_array.append(time.time() - time_begin)
+            #     acc = MF.accuracy(batch_pred, batch_labels)
+            #     acc = acc.reshape([-1]).cpu()
+            #     loss = loss.reshape([-1]).cpu()
+            #     dist.all_reduce(acc)
+            #     acc /= args.n_ranks
+            #     dist.all_reduce(loss)
+            #     loss /= args.n_ranks
+
+            #     acc_array.append(acc.item())
+            #     loss_array.append(loss.item())
+            #     if rank == 0:
+            #         print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | GPU {:.1f} MB'.format(
+            #             epoch, i, loss.item(), acc.item(), th.cuda.max_memory_allocated() / 1000000))
+
         toc = time.time()
         if epoch >= skip_epoch:
             total += (toc - tic)
             train_time += step
-        print("Epoch {}, rank {}, train time {}, epoch time{}".format(
-            epoch, rank, step, toc-tic))
+        if rank == 0:
+            print("Epoch {}, rank {}, train time {}, epoch time{}".format(
+                epoch, rank, step, toc-tic))
     monitor.stop()
     print("rank:", rank, " end2end time:",
           total/(args.num_epochs - skip_epoch))
@@ -388,6 +418,14 @@ def run(rank, args):
     for i in range(loader_number):
         load_workers[i].join()
     monitor.join()
+    if rank == 0:
+        print("array len:", len(time_array), len(acc_array), len(loss_array))
+        with open("pipeline_paper_curve.txt", 'w') as file:
+            for i in range(len(time_array)):
+                file.write(str(time_array[i]) + ' ')
+                file.write(str(acc_array[i]) + ' ')
+                file.write(str(loss_array[i]) + '\n')
+            file.close()
     cleanup()
 
 
@@ -421,6 +459,7 @@ if __name__ == '__main__':
                         help='Memory used to cache graph topology. Setting it not equal to -1 disables graph_cache_ratio')
     parser.add_argument('--feat_cache_gb', default=-1, type=int,
                         help='Memory used to cache features, Setting it not equal to -1 disables cache_ratio')
+    parser.add_argument('--log_every', default=1, type=int)
     args = parser.parse_args()
 
     mp.spawn(run,

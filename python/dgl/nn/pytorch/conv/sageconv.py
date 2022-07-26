@@ -118,8 +118,8 @@ class SAGEConv(nn.Module):
             self.fc_pool = nn.Linear(self._in_src_feats, self._in_src_feats)
         if aggregator_type == 'lstm':
             self.lstm = nn.LSTM(self._in_src_feats, self._in_src_feats, batch_first=True)
-        if aggregator_type != 'gcn':
-            self.fc_self = nn.Linear(self._in_dst_feats, out_feats, bias=False)
+        # if aggregator_type != 'gcn':
+        #     self.fc_self = nn.Linear(self._in_dst_feats, out_feats, bias=False)
         self.fc_neigh = nn.Linear(self._in_src_feats, out_feats, bias=False)
         if bias:
             self.bias = nn.parameter.Parameter(torch.zeros(self._out_feats))
@@ -144,8 +144,8 @@ class SAGEConv(nn.Module):
             nn.init.xavier_uniform_(self.fc_pool.weight, gain=gain)
         if self._aggre_type == 'lstm':
             self.lstm.reset_parameters()
-        if self._aggre_type != 'gcn':
-            nn.init.xavier_uniform_(self.fc_self.weight, gain=gain)
+        # if self._aggre_type != 'gcn':
+        #     nn.init.xavier_uniform_(self.fc_self.weight, gain=gain)
         nn.init.xavier_uniform_(self.fc_neigh.weight, gain=gain)
 
     def _compatibility_check(self):
@@ -264,7 +264,8 @@ class SAGEConv(nn.Module):
             if self._aggre_type == 'gcn':
                 rst = h_neigh
             else:
-                rst = self.fc_self(h_self) + h_neigh
+                rst = h_neigh
+                #rst = self.fc_self(h_self) + h_neigh
 
             # bias term
             if self.bias is not None:

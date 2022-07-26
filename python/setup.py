@@ -32,6 +32,7 @@ def get_lib_path():
 
     lib_path = libinfo['find_lib_path']()
     libs = [lib_path[0]]
+    print('------------------------------- dgl libs:', libs)
 
     return libs, version
 

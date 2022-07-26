@@ -18,6 +18,7 @@ ExternalProject_Add(nccl_external
   INSTALL_COMMAND ""
   )
 
+message(STATUS "NCCL bulid dir ${NCCL_BUILD_DIR}")
 # set output variables
 set(NCCL_FOUND TRUE)
 set(NCCL_LIBRARY "${NCCL_BUILD_DIR}/lib/libnccl_static.a")
