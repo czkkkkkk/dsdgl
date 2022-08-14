@@ -41,11 +41,13 @@ struct DSContext {
   bool initialized = false;
   int world_size;
   int rank;
+  int global_rank, global_world_size;
   int thread_num;
   std::vector<ncclComm_t> nccl_comm;
   std::vector<std::unique_ptr<CommInfo> > comm_info;
   std::unique_ptr<Coordinator> coordinator;
   std::unique_ptr<Coordinator> comm_coordinator;
+  std::unique_ptr<Coordinator> local_coordinator;
 
   // Feature related arrays
   bool feat_loaded = false;

@@ -25,8 +25,8 @@ class DummyOp(th.autograd.Function):
         _CAPI_DGLDSSetStream(s._as_parameter_, 0, 2)
         return grad_output
 
-def init(rank, world_size, thread_num=2, enable_kernel_control=False, enable_comm_control=True, enable_profiler=False):
-    _CAPI_DGLDSInitialize(rank, world_size, thread_num, enable_kernel_control, enable_comm_control, enable_profiler)
+def init(rank, world_size, global_rank, global_world_size, thread_num=2, enable_kernel_control=False, enable_comm_control=True, enable_profiler=False):
+    _CAPI_DGLDSInitialize(rank, world_size, global_rank, global_world_size, thread_num, enable_kernel_control, enable_comm_control, enable_profiler)
 
 # dgl thread local stream for both forward and backward threads
 def set_device_thread_local_stream(device, s):

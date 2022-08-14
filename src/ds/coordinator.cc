@@ -12,20 +12,20 @@ namespace dgl {
 namespace ds {
 
 
-Coordinator::Coordinator(int rank, int world_size, int port) {
+Coordinator::Coordinator(int rank, int world_size, int port, const std::string& root_addr, const std::string& my_addr) {
   rank_ = rank;
   n_peers_ = world_size;
   is_root_ = rank == 0? true: false;
   zmq_ctx_ = std::unique_ptr<zmq::context_t>(new zmq::context_t());
   LOG(INFO) << "Coordinator initializing port: " << port;
-  _Initialize(port);
+  _Initialize(port, root_addr, my_addr);
 }
 
-void Coordinator::_Initialize(int mport) {
+void Coordinator::_Initialize(int mport, const std::string& root_addr, const std::string& my_addr) {
   // 1. Each rank setups the socket receving msg from the root
   int port = GetAvailablePort();
   recv_addr_ =
-      std::string("tcp://") + GetHostName() + ":" + std::to_string(port);
+      std::string("tcp://") + my_addr + ":" + std::to_string(port);
   auto recv_bind_addr = std::string("tcp://*:") + std::to_string(port);
   recv_from_root_ = std::unique_ptr<zmq::socket_t>(new zmq::socket_t(*zmq_ctx_, ZMQ_PULL));
   recv_from_root_->bind(recv_bind_addr);
@@ -35,7 +35,7 @@ void Coordinator::_Initialize(int mport) {
   // NOTE: currently assume all ranks are on the same machine
   int master_port = mport;
   auto root_bind_addr = std::string("tcp://*:") + std::to_string(master_port);
-  auto root_conn_addr = std::string("tcp://") + GetHostName() + ":" + std::to_string(master_port);
+  auto root_conn_addr = std::string("tcp://") + root_addr + ":" + std::to_string(master_port);
   if (is_root_) {
     root_receiver_ = std::unique_ptr<zmq::socket_t>(new zmq::socket_t(*zmq_ctx_, ZMQ_PULL));
     root_receiver_->bind(root_bind_addr);
@@ -48,7 +48,7 @@ void Coordinator::_Initialize(int mport) {
             << recv_addr_;
   int pid = getpid();
   zmq_sendmore_int32(send_to_root_.get(), rank_);
-  zmq_sendmore_string(send_to_root_.get(), GetHostName());
+  zmq_sendmore_string(send_to_root_.get(), my_addr);
   zmq_sendmore_int32(send_to_root_.get(), pid);
   zmq_send_string(send_to_root_.get(), recv_addr_);
 

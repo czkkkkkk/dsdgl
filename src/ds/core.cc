@@ -50,21 +50,27 @@ void InitNcclComm(ncclComm_t *nccl_comm, DSContext *ds_context, int world_size, 
     ncclGetUniqueId(&nccl_id);
   }
   std::string nccl_id_str = NCCLIdToString(nccl_id);
-  ds_context->coordinator->Broadcast(nccl_id_str);
+  ds_context->local_coordinator->Broadcast(nccl_id_str);
   nccl_id = StringToNCCLId(nccl_id_str);
   ncclCommInitRank(nccl_comm, world_size, nccl_id, rank);
 }
 
-void Initialize(int rank, int world_size, int thread_num, bool enable_kernel_control, bool enable_comm_control, bool enable_profiler) {
+void Initialize(int rank, int world_size, int global_rank, int global_world_size, int thread_num, bool enable_kernel_control, bool enable_comm_control, bool enable_profiler) {
   LOG(INFO) << "Rank [" << rank << "] initializing DS context";
   auto* ds_context = DSContext::Global();
   ds_context->initialized = true;
   ds_context->rank = rank;
   ds_context->world_size = world_size;
+  ds_context->global_rank = global_rank;
+  ds_context->global_world_size = global_world_size;
+  auto root_addr = GetEnvParam("ROOT_ADDR", std::string(""));
+  auto my_addr = GetEnvParam("MY_ADDR", std::string(""));
   int master_port = GetEnvParam("MASTER_PORT", 12633);
   int comm_port = GetEnvParam("COMM_PORT", 12644);
-  ds_context->coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size, master_port));
-  ds_context->comm_coordinator = std::unique_ptr<Coordinator>(new Coordinator(rank, world_size, comm_port));
+  int local_port = GetEnvParam("LOCAL_PORT", 12646);
+  ds_context->coordinator = std::unique_ptr<Coordinator>(new Coordinator(ds_context->global_rank, ds_context->global_world_size, master_port, root_addr, my_addr));
+  ds_context->comm_coordinator = std::unique_ptr<Coordinator>(new Coordinator(ds_context->global_rank, ds_context->global_world_size, comm_port, root_addr, my_addr));
+  ds_context->local_coordinator = std::unique_ptr<Coordinator>(new Coordinator(ds_context->rank, ds_context->world_size, local_port, my_addr, my_addr));
   cudaSetDevice(rank);
 
   ds_context->thread_num = thread_num;
@@ -84,6 +90,7 @@ void Initialize(int rank, int world_size, int thread_num, bool enable_kernel_con
       SetupGpuCommunicationEnv(ds_context->comm_info[i].get());
     }
   } else {
+    LOG(INFO) << "Rank " << rank << " world_size " << world_size << " try to build nccl comm";
     // Build NCCL environment
     ds_context->nccl_comm.resize(thread_num);
     for (int i=0; i<thread_num; i++) {
@@ -110,11 +117,13 @@ DGL_REGISTER_GLOBAL("ds._CAPI_DGLDSInitialize")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   int rank = args[0];
   int world_size = args[1];
-  int thread_num = args[2];
-  bool enable_kernel_control = args[3];
-  bool enable_comm_control = args[4];
-  bool enable_profiler = args[5];
-  Initialize(rank, world_size, thread_num, enable_kernel_control, enable_comm_control, enable_profiler);
+  int global_rank = args[2];
+  int global_world_size = args[3];
+  int thread_num = args[4];
+  bool enable_kernel_control = args[5];
+  bool enable_comm_control = args[6];
+  bool enable_profiler = args[7];
+  Initialize(rank, world_size, global_rank, global_world_size, thread_num, enable_kernel_control, enable_comm_control, enable_profiler);
 });
 
 // Set dgl thread local stream

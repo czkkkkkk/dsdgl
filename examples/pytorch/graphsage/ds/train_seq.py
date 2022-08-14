@@ -171,6 +171,11 @@ def show_thread():
     print('python thread id: {}, thread name: {}'.format(t.ident, t.getName()))
 
 
+def calculate_ratio(gb, size, entry_size_in_byte):
+    n_cached = gb * 1024 * 1024 * 1024 / entry_size_in_byte
+    ret = n_cached / size * 100
+    return min(100., ret)
+
 def run(rank, args):
     print('Start rank', rank, 'with args:', args)
     process = psutil.Process(os.getpid())
@@ -195,6 +200,13 @@ def run(rank, args):
         node_feats['_N/features'] = th.ones(
             [n_local_nodes, args.in_feats], dtype=th.float32)
         node_feats['_N/labels'] = th.zeros([n_local_nodes], dtype=th.float32)
+
+    if args.graph_cache_gb != -1:
+        args.graph_cache_ratio = calculate_ratio(
+            args.graph_cache_gb, g.number_of_edges(), 8)
+    if args.feat_cache_gb != -1:
+        args.cache_ratio = calculate_ratio(
+            args.feat_cache_gb, n_local_nodes, 4 * node_feats['_N/features'].shape[1])
 
     in_feats = node_feats['_N/features'].shape[1]
 
@@ -396,6 +408,10 @@ if __name__ == '__main__':
                         help='Percentages of features on GPUs')
     parser.add_argument('--graph_cache_ratio', default=100,
                         type=int, help='Ratio of edges cached in the GPU')
+    parser.add_argument('--graph_cache_gb', default=-1, type=int,
+                        help='Memory used to cache graph topology. Setting it not equal to -1 disables graph_cache_ratio')
+    parser.add_argument('--feat_cache_gb', default=-1, type=int,
+                        help='Memory used to cache features, Setting it not equal to -1 disables cache_ratio')
     parser.add_argument('--in_feats', default=256, type=int,
                         help='In feature dimension used when the graph do not have feature')
     parser.add_argument('--log_every', default=10, type=int)

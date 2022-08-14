@@ -37,7 +37,7 @@ struct ProcInfo {
 
 class Coordinator {
  public:
-  Coordinator(int rank, int workd_size, int port=12306);
+  Coordinator(int rank, int workd_size, int port, const std::string& root_addr, const std::string& my_addr);
 
   int GetWorldSize() const { return n_peers_; }
   int GetRank() const { return rank_; }
@@ -206,7 +206,7 @@ class Coordinator {
   }
 
  private:
-  void _Initialize(int port);
+  void _Initialize(int port, const std::string& root_addr, const std::string& my_addr);
 
   bool is_root_;
   int rank_;

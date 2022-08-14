@@ -32,11 +32,15 @@ os.environ['DGLBACKEND'] = 'pytorch'
 
 
 def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12378'
+    # os.environ['MASTER_ADDR'] = '172.31.42.109'
+    # os.environ['MASTER_PORT'] = '12340'
 
+    master_addr = '172.31.42.109'
     # initialize the process group
-    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+    init_method = 'tcp://{master_addr}:{master_port}'.format(
+        master_addr=master_addr, master_port='12356')
+    print('setup for rank {}, world_size {}, init_method: {}'.format(rank, world_size, init_method))
+    dist.init_process_group("gloo", rank=rank, world_size=world_size, init_method=init_method)
 
 
 def cleanup():
@@ -213,12 +217,17 @@ def calculate_ratio(gb, size, entry_size_in_byte):
 
 def run(rank, args):
     print('Start rank', rank, 'with args:', args)
+    global_rank = rank + args.nproc_per_node * args.node_rank
+    global_n_ranks = args.nproc_per_node * args.nnodes
+
+    setup(global_rank, global_n_ranks)
+
     th.cuda.set_device(rank)
-    setup(rank, args.n_ranks)
     sampler_number = 1
     loader_number = 1
     nvmlInit()
-    ds.init(rank, args.n_ranks, rank, args.n_ranks, thread_num=sampler_number +
+    nproc_per_node = args.nproc_per_node
+    ds.init(rank, nproc_per_node, global_rank, global_n_ranks, thread_num=sampler_number +
             loader_number, enable_kernel_control=False)
 
     # load partitioned graph
@@ -319,9 +328,9 @@ def run(rank, args):
         model = SAGE(in_feats, args.num_hidden, n_classes,
                      len(fanout), th.relu, args.dropout)
         model = model.to(device)
-        if args.n_ranks > 1:
-            model = DistributedDataParallel(
-                model, device_ids=[rank], output_device=rank)
+        # if global_n_ranks > 1:
+        model = DistributedDataParallel(
+            model, device_ids=[rank], output_device=rank)
         loss_fcn = nn.CrossEntropyLoss()
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
@@ -382,25 +391,9 @@ def run(rank, args):
                 loss.backward()
                 optimizer.step()
                 s.synchronize()
-                th.distributed.barrier()
+                # th.distributed.barrier()
             step += time.time() - begin
 
-            # if i % args.log_every == 0:
-            #     #acc = compute_acc(batch_pred, batch_labels)
-            #     time_array.append(time.time() - time_begin)
-            #     acc = MF.accuracy(batch_pred, batch_labels)
-            #     acc = acc.reshape([-1]).cpu()
-            #     loss = loss.reshape([-1]).cpu()
-            #     dist.all_reduce(acc)
-            #     acc /= args.n_ranks
-            #     dist.all_reduce(loss)
-            #     loss /= args.n_ranks
-
-            #     acc_array.append(acc.item())
-            #     loss_array.append(loss.item())
-            #     if rank == 0:
-            #         print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | GPU {:.1f} MB'.format(
-            #             epoch, i, loss.item(), acc.item(), th.cuda.max_memory_allocated() / 1000000))
 
         toc = time.time()
         if epoch >= skip_epoch:
@@ -434,10 +427,13 @@ if __name__ == '__main__':
     register_data_args(parser)
     parser.add_argument('--graph_name', default='test',
                         type=str, help='graph name')
+
+    parser.add_argument('--nnodes', type=int)
+    parser.add_argument('--nproc_per_node', type=int)
+    parser.add_argument('--node_rank', type=int)
+
     parser.add_argument('--part_config', default='/data/ds/metis_ogbn-papers100M4/ogbn-papers100M.json',
                         type=str, help='The path to the partition config file')
-    parser.add_argument('--n_ranks', default=4,
-                        type=int, help='Number of ranks')
     parser.add_argument('--batch_size', default=1024,
                         type=int, help='Batch size')
     parser.add_argument('--num_hidden', default=256,
@@ -460,9 +456,10 @@ if __name__ == '__main__':
     parser.add_argument('--feat_cache_gb', default=-1, type=int,
                         help='Memory used to cache features, Setting it not equal to -1 disables cache_ratio')
     parser.add_argument('--log_every', default=1, type=int)
+
     args = parser.parse_args()
 
     mp.spawn(run,
              args=(args, ),
-             nprocs=args.n_ranks,
+             nprocs=args.nproc_per_node,
              join=True)
