@@ -26,8 +26,8 @@ feat_cache_gb=3
 # feat_cache_gb=$2
 graph_cache_gb=3
 # graph_cache_gb=$3
-feat_mode=PartitionCache
 feat_mode=AllCache
+feat_mode=DistPartitionCache
 batch_size=1024
 
 node_rank=1

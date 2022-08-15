@@ -703,6 +703,37 @@ __global__ void _CSRRowWiseLoadSubtensorAlignedKernelV2(
   }
 }
 
+template <int BLOCK_ROWS>
+__global__ void _CSRRowWiseLoadSubtensorAlignedKernelLocalV2(
+    IdType dim, 
+    IdType size, 
+    IdType *index,
+    IdType *input_mapping,
+    IdType *output_mapping,
+    DataType *input_table,
+    DataType *output_table,
+    IdType dist_shared_feat_barrier,
+    int node_rank) {
+  IdType out_row = blockIdx.x*blockDim.y+threadIdx.y;
+  while (out_row < size) {
+    const IdType row = index? index[out_row]: out_row;
+    const IdType origin_in_row_start = input_mapping? input_mapping[row] * dim: row * dim;
+    const IdType out_row_start = output_mapping? output_mapping[out_row] * dim: out_row * dim;
+    const IdType in_row_start = origin_in_row_start & ~0x1F;
+    const IdType in_row_end = origin_in_row_start + dim;
+    IdType idx = threadIdx.x + in_row_start;
+    if ((row < dist_shared_feat_barrier) == (node_rank == 0)) {
+      while (idx < in_row_end) {
+        if (idx >= origin_in_row_start) {
+          output_table[out_row_start + idx - origin_in_row_start] = input_table[idx];
+        }
+        idx += blockDim.x;
+      }
+    }
+    out_row += gridDim.x * blockDim.y;
+  }
+}
+
 void IndexSelect(IdType size, IdArray index, IdArray input_table, IdArray output_table, int feat_dim, IdArray input_mapping, IdArray output_mapping, cudaStream_t stream) {
   if(stream == 0) {
     stream = CUDAThreadEntry::ThreadLocal()->stream;
@@ -745,6 +776,30 @@ void IndexSelectUVA(IdType size, IdArray index, IdArray input_table, IdArray out
   if (grid.x > 0) {
     _CSRRowWiseLoadSubtensorAlignedKernelV2<BLOCK_ROWS><<<grid, block, 0, stream>>>(
       feat_dim, size, index_ptr, input_mapping_ptr, output_mapping_ptr, input_table.Ptr<DataType>(), output_table.Ptr<DataType>()
+    );
+    CUDACHECK(cudaGetLastError());
+  }
+}
+
+void IndexSelectUVALocal(IdType size, IdArray index, IdArray input_table, IdArray output_table, int feat_dim, IdType dist_shared_feat_barrier, int node_rank, IdArray input_mapping, IdArray output_mapping, cudaStream_t stream) {
+  if(stream == 0) {
+    stream = CUDAThreadEntry::ThreadLocal()->stream;
+  }
+  // *features_to_send = IdArray::Empty({n_frontier * dim}, features->dtype, dgl_ctx);
+  constexpr int BLOCK_X = 128;
+  constexpr int BLOCK_ROWS = 4;
+  constexpr int TILE_SIZE = BLOCK_ROWS * 64;
+  dim3 block(BLOCK_X, BLOCK_ROWS);
+  int BLOCK_NUM = (size + TILE_SIZE - 1)/TILE_SIZE;
+  BLOCK_NUM = 8;
+  dim3 grid(BLOCK_NUM);
+  KernelController::AdjustKernelSize(grid, block);
+  IdType* index_ptr = IsNullArray(index)? nullptr: index.Ptr<IdType>();
+  IdType* input_mapping_ptr = IsNullArray(input_mapping)? nullptr: input_mapping.Ptr<IdType>();
+  IdType* output_mapping_ptr = IsNullArray(output_mapping)? nullptr: output_mapping.Ptr<IdType>();
+  if (grid.x > 0) {
+    _CSRRowWiseLoadSubtensorAlignedKernelLocalV2<BLOCK_ROWS><<<grid, block, 0, stream>>>(
+      feat_dim, size, index_ptr, input_mapping_ptr, output_mapping_ptr, input_table.Ptr<DataType>(), output_table.Ptr<DataType>(), dist_shared_feat_barrier, node_rank
     );
     CUDACHECK(cudaGetLastError());
   }

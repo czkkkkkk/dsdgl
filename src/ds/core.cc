@@ -63,6 +63,7 @@ void Initialize(int rank, int world_size, int global_rank, int global_world_size
   ds_context->world_size = world_size;
   ds_context->global_rank = global_rank;
   ds_context->global_world_size = global_world_size;
+  ds_context->node_rank = global_rank >= world_size;
   auto root_addr = GetEnvParam("ROOT_ADDR", std::string(""));
   auto my_addr = GetEnvParam("MY_ADDR", std::string(""));
   int master_port = GetEnvParam("MASTER_PORT", 12633);
@@ -71,6 +72,7 @@ void Initialize(int rank, int world_size, int global_rank, int global_world_size
   ds_context->coordinator = std::unique_ptr<Coordinator>(new Coordinator(ds_context->global_rank, ds_context->global_world_size, master_port, root_addr, my_addr));
   ds_context->comm_coordinator = std::unique_ptr<Coordinator>(new Coordinator(ds_context->global_rank, ds_context->global_world_size, comm_port, root_addr, my_addr));
   ds_context->local_coordinator = std::unique_ptr<Coordinator>(new Coordinator(ds_context->rank, ds_context->world_size, local_port, my_addr, my_addr));
+  ds_context->dist_coordinator = std::unique_ptr<DistCoordinator>(new DistCoordinator(rank, world_size, global_rank, global_world_size, ds_context->node_rank, ds_context->coordinator.get()));
   cudaSetDevice(rank);
 
   ds_context->thread_num = thread_num;

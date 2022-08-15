@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "coordinator.h"
+#include "dist_coordinator.h"
 #include "./comm/comm_info.h"
 #include "./profiler.h"
 
@@ -21,7 +22,7 @@ using namespace dgl::aten;
 namespace dgl {
 namespace ds {
 
-enum FeatMode { kFeatModeAllCache, kFeatModePartitionCache, kFeatModeReplicateCache };
+enum FeatMode { kFeatModeAllCache, kFeatModePartitionCache, kFeatModeReplicateCache, kFeatModeDistPartitionCache };
 
 #define ENCODE_ID(i) (-(i)-2)
 
@@ -42,18 +43,22 @@ struct DSContext {
   int world_size;
   int rank;
   int global_rank, global_world_size;
+  int node_rank;
   int thread_num;
   std::vector<ncclComm_t> nccl_comm;
   std::vector<std::unique_ptr<CommInfo> > comm_info;
   std::unique_ptr<Coordinator> coordinator;
   std::unique_ptr<Coordinator> comm_coordinator;
   std::unique_ptr<Coordinator> local_coordinator;
+  std::unique_ptr<DistCoordinator> dist_coordinator;
 
   // Feature related arrays
   bool feat_loaded = false;
   FeatMode feat_mode;
   IdArray dev_feats, shared_feats, feat_pos_map;
   int feat_dim;
+  // Assume there are only two machines in the dist mode
+  int64_t dist_shared_feat_barrier;
 
 
   // Graph related arrays

@@ -132,7 +132,7 @@ void Coordinator::Barrier() {
     }
   }
   int val = RecvIntFromRoot();
-  DCHECK_EQ(val, 1);
+  CHECK_EQ(val, 1);
 }
 
 }

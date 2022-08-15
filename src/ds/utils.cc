@@ -111,15 +111,15 @@ IdArray CreateShmArray(IdArray arr, const std::string& shm_name) {
   auto* ds_ctx = DSContext::Global();
   int rank = ds_ctx->rank;
   int create = rank == 0;
-  auto* coor = DSContext::Global()->coordinator.get();
+  auto* local_coor = DSContext::Global()->local_coordinator.get();
   size_t size = arr->shape[0];
-  coor->Broadcast(size);
+  local_coor->Broadcast(size);
 
   if(rank == 0 && size > 0) {
     ds_shm_open(shm_name.c_str(), size * arr->dtype.bits / 8, &host_ptr, &dev_ptr, create);
     memcpy(host_ptr, arr.Ptr<void>(), size * arr->dtype.bits / 8);
   }
-  ds_ctx->coordinator->Barrier();
+  local_coor->Barrier();
   if(rank != 0 && size > 0) {
     ds_shm_open(shm_name.c_str(), size * arr->dtype.bits / 8, &host_ptr, &dev_ptr, create);
   }

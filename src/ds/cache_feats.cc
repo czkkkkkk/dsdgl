@@ -60,7 +60,6 @@ void PartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_de
   });
 
   std::vector<IdType> local_shared_ids;
-  // FIXME
   std::vector<DataType> local_shared_feats;
   for(int i = n_dev_nodes; i < n_local_nodes; ++i) {
     IdType idx = sorted_local_ids[i];
@@ -111,6 +110,85 @@ void PartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_de
   ds_ctx->dev_feats = IdArray::FromVector(local_dev_feats, {kDLGPU, rank});
   ds_ctx->shared_feats = shared_feats;
   ds_ctx->feat_pos_map = IdArray::FromVector(feat_pos_map, {kDLGPU, rank});
+}
+
+void DistPartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_degrees, double ratio) {
+  int n_local_nodes = feats->shape[0];
+  int feat_dim = feats->shape[1];
+  int n_dev_nodes = n_local_nodes * (ratio / 100.);
+  auto* ds_ctx = DSContext::Global();
+  int rank = ds_ctx->rank;
+  auto* local_coor = ds_ctx->local_coordinator.get();
+
+  // Sort the local nodes according to their degree
+  // Partition local nodes into local nodes and shared nodes
+  // Send shared nodes and shared feats to the root
+  // Root creates a shared memory for collected shared feats and sent the feat_pos_map to all ranks
+  // Each rank receives the feat_pos_map and maps the feat_pos_map to the local dev_feats
+  std::vector<IdType> sorted_local_ids(n_local_nodes);
+  std::iota(sorted_local_ids.begin(), sorted_local_ids.end(), 0);
+  std::sort(sorted_local_ids.begin(), sorted_local_ids.end(), [&](IdType l, IdType r) {
+    auto* deg_ptr = local_degrees.Ptr<IdType>();
+    return deg_ptr[l] > deg_ptr[r];
+  });
+
+  std::vector<IdType> local_shared_ids;
+  std::vector<DataType> local_shared_feats;
+  for(int i = n_dev_nodes; i < n_local_nodes; ++i) {
+    IdType idx = sorted_local_ids[i];
+    local_shared_ids.push_back(global_ids.Ptr<IdType>()[idx]);
+    for(int j = 0; j < feat_dim; ++j) {
+      local_shared_feats.push_back(feats.Ptr<DataType>()[idx*feat_dim+j]);
+    }
+  }
+  auto gathered_n_nodes = local_coor->Gather(n_local_nodes);
+  auto gathered_ids = local_coor->Gather(local_shared_ids);
+  auto gathered_feats = local_coor->GatherLargeVector(local_shared_feats);
+  IdArray shared_feats = NullArray(feats->dtype, feats->ctx);
+  std::vector<IdType> feat_pos_map;
+  IdType n_shared_nodes = 0;
+  if(local_coor->IsRoot()) {
+    IdType n_nodes = 0;
+    for(auto c: gathered_n_nodes) {
+      n_nodes += c;
+    }
+    auto flatten_ids = Flatten(gathered_ids);
+    n_shared_nodes = flatten_ids.size();
+
+    // auto flatten_feats = std::vector<DataType>(n_shared_nodes * feat_dim, 1);
+    auto flatten_feats = Flatten(gathered_feats);
+    feat_pos_map.resize(n_nodes, -1);
+    for(int i = 0; i < flatten_ids.size(); ++i) {
+      IdType global_nid = flatten_ids[i];
+      feat_pos_map[global_nid] = ENCODE_ID(i);
+    }
+    shared_feats = IdArray::FromVector<DataType>(flatten_feats);
+  }
+  LOG(ERROR) << "Before create shm";
+  shared_feats = CreateShmArray(shared_feats, "dsdgl_partition_cache_host_feats");
+  LOG(ERROR) << "After create shm";
+  // Get the global feat_pos_map
+  local_coor->Broadcast(feat_pos_map);
+  local_coor->Broadcast(n_shared_nodes);
+  std::vector<DataType> local_dev_feats;
+  for(int i = 0; i < n_dev_nodes; ++i) {
+    auto* global_ids_ptr = global_ids.Ptr<IdType>();
+    IdType idx = sorted_local_ids[i];
+    IdType global_id = global_ids_ptr[idx];
+    CHECK(global_id >= 0 && global_id < feat_pos_map.size());
+    feat_pos_map[global_id] = i;
+    for(int j = 0; j < feat_dim; ++j) {
+      local_dev_feats.push_back(feats.Ptr<DataType>()[idx*feat_dim+j]);
+    }
+  }
+  ds_ctx->feat_mode = kFeatModeDistPartitionCache;
+  ds_ctx->feat_loaded = true;
+  ds_ctx->feat_dim = feat_dim;
+  ds_ctx->dev_feats = IdArray::FromVector(local_dev_feats, {kDLGPU, rank});
+  ds_ctx->shared_feats = shared_feats;
+  ds_ctx->feat_pos_map = IdArray::FromVector(feat_pos_map, {kDLGPU, rank});
+  ds_ctx->dist_shared_feat_barrier = n_shared_nodes / 2;
+  LOG(ERROR) << "Finished cache feats";
 }
 
 /**
@@ -195,6 +273,7 @@ DGL_REGISTER_GLOBAL("ds.cache._CAPI_DGLDSCacheFeats")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
   std::string feat_mode = args[0];
   IdArray feats = args[1];
+  LOG(INFO) << "Feature cache mode: " << feat_mode;
   if(feat_mode == "AllCache") {
     PartitionCacheAllFeats(feats);
   } else if(feat_mode == "PartitionCache") {
@@ -205,6 +284,14 @@ DGL_REGISTER_GLOBAL("ds.cache._CAPI_DGLDSCacheFeats")
     CHECK(global_ids->dtype.bits == 64);
     CHECK(local_degrees->dtype.bits == 64);
     PartitionCacheSomeFeats(feats, global_ids, local_degrees, ratio);
+  } else if(feat_mode == "DistPartitionCache") {
+    IdArray global_ids = args[2];
+    IdArray local_degrees = args[3];
+    double ratio = args[4];
+    LOG(INFO) << "Feature cache ratio: " << ratio;
+    CHECK(global_ids->dtype.bits == 64);
+    CHECK(local_degrees->dtype.bits == 64);
+    DistPartitionCacheSomeFeats(feats, global_ids, local_degrees, ratio);
   } else if(feat_mode == "ReplicateCache") {
     IdArray global_ids = args[2];
     IdArray local_degrees = args[3];
