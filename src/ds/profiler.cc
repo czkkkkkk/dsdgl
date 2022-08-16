@@ -29,13 +29,15 @@ std::pair<int64_t, int64_t> ProcessAccess(std::vector<int64_t>& accesses) {
   }
   return {ret, saved};
 }
-void Profiler::UpdateDSSamplingLocalCount(IdArray sampled_index, int fanout) {
+void Profiler::UpdateDSSamplingLocalCount(IdArray sampled_index, IdArray degrees, int fanout) {
   auto* thr_entry = CUDAThreadEntry::ThreadLocal();
   auto *context = DSContext::Global();
   int size = sampled_index->shape[0];
   auto host_sampled_index = sampled_index.CopyTo({kDLCPU, 0}, thr_entry->stream);
+  auto host_degrees = degrees.CopyTo({kDLCPU, 0}, thr_entry->stream);
   CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
   int64_t *ptr = host_sampled_index.Ptr<int64_t>();
+  int64_t *deg_ptr = host_degrees.Ptr<int64_t>();
   CHECK(size % fanout == 0);
 
   for(int i = 0; i < size / fanout; ++i) {
@@ -63,6 +65,10 @@ void Profiler::UpdateDSSamplingLocalCount(IdArray sampled_index, int fanout) {
       ds_sampling_pcie_count_ += count * CACHE_LINE + count * PCIE_OVERHEAD;
     }
     saved_count_ += saved * CACHE_LINE + saved * PCIE_OVERHEAD;
+  }
+  optimal_ += size * 8;
+  for (int i = 0; i < host_degrees->shape[0]; ++i) {
+    pull_data_ += deg_ptr[i] * 8;
   }
 }
 void Profiler::UpdateDSSamplingNvlinkCount(IdArray send_offset, int fanout) {
@@ -122,6 +128,8 @@ void Profiler::Report(int num_epochs) {
   auto nvlink_node_count = GatherSum(ds_sampling_nvlink_node_count_);
   auto saved = GatherSum(saved_count_);
   auto pcie_count = GatherSum(ds_sampling_pcie_count_);
+  auto optimal = GatherSum(optimal_);
+  auto pull_data = GatherSum(pull_data_);
 
   if(context->rank == 0) {
     std::stringstream ss;
@@ -131,6 +139,8 @@ void Profiler::Report(int num_epochs) {
     ss << " # DS Sampling Nvlink Node Access: " << nvlink_node_count / 1e9 / num_epochs << " GB/epoch\n";
     ss << " # DS Sampling PCIe Access: " << pcie_count / 1e9 / num_epochs << " GB/epoch\n";
     ss << " # DS Sampling Saved Access: " << saved / 1e9 / num_epochs << " GB/epoch\n";
+    ss << " # DS Sampling Optimal: " << optimal / 1e9 / num_epochs << " GB/epoch\n";
+    ss << " # DS Sampling Pull Data: " << pull_data / 1e9 / num_epochs << " GB/epoch\n";
     LOG(INFO) << ss.str();
   }
 }

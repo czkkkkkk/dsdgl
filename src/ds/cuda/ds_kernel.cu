@@ -370,7 +370,8 @@ __global__ void _CSRRowWiseSampleReplaceKernelV2Profile(
     IdType *adj_pos_map,
     IdType *out_ptr, 
     IdType *out_index,
-    IdType *profile_sampled_index) {
+    IdType *profile_sampled_index,
+    IdType *profile_degree) {
   assert(blockDim.x == WARP_SIZE);
 
   int64_t out_row = blockIdx.x*TILE_SIZE+threadIdx.y;
@@ -394,6 +395,7 @@ __global__ void _CSRRowWiseSampleReplaceKernelV2Profile(
     const int64_t out_row_start = out_ptr[out_row];
     const int64_t deg = (on_dev? in_ptr[pos+1]: uva_in_ptr[pos+1]) - in_row_start;
     const int64_t* index = (on_dev? in_index: uva_in_index) + in_row_start;
+    profile_degree[out_row] = deg;
 
     if (deg > 0) {
       // each thread then blindly copies in rows only if deg > 0.
@@ -505,6 +507,7 @@ IdArray SampleNeighbors(IdArray frontier, int fanout, IdArray weight=aten::NullA
       }
     } else {
       auto profile_sampled_index = IdArray::Empty({n_frontier * fanout}, frontier->dtype, dgl_ctx);
+      auto profile_degree = IdArray::Empty({n_frontier}, frontier->dtype, dgl_ctx);
       if (bias) {
         _CSRRowWiseSampleReplaceKernelWeightV2Profile<BLOCK_WARPS, TILE_SIZE><<<grid, block, 0, thr_entry->stream>>>(
           random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), dev_csr.indptr.Ptr<IdType>(), dev_csr.indices.Ptr<IdType>(), uva_csr.indptr.Ptr<IdType>(), uva_csr.indices.Ptr<IdType>(), 
@@ -517,11 +520,12 @@ IdArray SampleNeighbors(IdArray frontier, int fanout, IdArray weight=aten::NullA
           random_seed, fanout, n_frontier, frontier.Ptr<IdType>(), dev_csr.indptr.Ptr<IdType>(), dev_csr.indices.Ptr<IdType>(), uva_csr.indptr.Ptr<IdType>(), uva_csr.indices.Ptr<IdType>(), 
           ds_context->adj_pos_map.Ptr<IdType>(),
           edge_offset.Ptr<IdType>(), neighbors.Ptr<IdType>(),
-          profile_sampled_index.Ptr<IdType>()
+          profile_sampled_index.Ptr<IdType>(),
+          profile_degree.Ptr<IdType>()
         );
       }
       CUDACHECK(cudaStreamSynchronize(thr_entry->stream));
-      ds_context->profiler->UpdateDSSamplingLocalCount(profile_sampled_index, fanout);
+      ds_context->profiler->UpdateDSSamplingLocalCount(profile_sampled_index, profile_degree, fanout);
     }
   }
   // CUDACHECK(cudaDeviceSynchronize());
