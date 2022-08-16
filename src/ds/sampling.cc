@@ -204,6 +204,8 @@ IdArray RebalanceRandom(IdArray ids, int batch_size, Coordinator* coor) {
   auto ids_vec = ids.ToVector<int64_t>();
   auto vecs = coor->Gather(ids_vec);
   if(coor->IsRoot()) {
+    // For dist execution
+    vecs.resize(DSContext::Global()->world_size);
     int total = 0;
     for (const auto& vec: vecs) {
       total += vec.size();
