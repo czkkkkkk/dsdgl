@@ -144,6 +144,8 @@ void DistPartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray loca
   auto gathered_n_nodes = local_coor->Gather(n_local_nodes);
   auto gathered_ids = local_coor->Gather(local_shared_ids);
   auto gathered_feats = local_coor->GatherLargeVector(local_shared_feats);
+  local_shared_feats.clear();
+  local_shared_feats.shrink_to_fit();
   IdArray shared_feats = NullArray(feats->dtype, feats->ctx);
   std::vector<IdType> feat_pos_map;
   IdType n_shared_nodes = 0;
@@ -157,6 +159,8 @@ void DistPartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray loca
 
     // auto flatten_feats = std::vector<DataType>(n_shared_nodes * feat_dim, 1);
     auto flatten_feats = Flatten(gathered_feats);
+    gathered_feats.clear();
+    gathered_feats.shrink_to_fit();
     feat_pos_map.resize(n_nodes, -1);
     for(int i = 0; i < flatten_ids.size(); ++i) {
       IdType global_nid = flatten_ids[i];
@@ -164,9 +168,7 @@ void DistPartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray loca
     }
     shared_feats = IdArray::FromVector<DataType>(flatten_feats);
   }
-  LOG(ERROR) << "Before create shm";
   shared_feats = CreateShmArray(shared_feats, "dsdgl_partition_cache_host_feats");
-  LOG(ERROR) << "After create shm";
   // Get the global feat_pos_map
   local_coor->Broadcast(feat_pos_map);
   local_coor->Broadcast(n_shared_nodes);

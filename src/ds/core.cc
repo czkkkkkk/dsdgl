@@ -70,7 +70,7 @@ void Initialize(int rank, int world_size, int global_rank, int global_world_size
   int comm_port = GetEnvParam("COMM_PORT", 12644);
   int local_port = GetEnvParam("LOCAL_PORT", 12646);
   ds_context->coordinator = std::unique_ptr<Coordinator>(new Coordinator(ds_context->global_rank, ds_context->global_world_size, master_port, root_addr, my_addr));
-  ds_context->comm_coordinator = std::unique_ptr<Coordinator>(new Coordinator(ds_context->global_rank, ds_context->global_world_size, comm_port, root_addr, my_addr));
+  ds_context->comm_coordinator = std::unique_ptr<Coordinator>(new Coordinator(ds_context->rank, ds_context->world_size, comm_port, my_addr, my_addr));
   ds_context->local_coordinator = std::unique_ptr<Coordinator>(new Coordinator(ds_context->rank, ds_context->world_size, local_port, my_addr, my_addr));
   ds_context->dist_coordinator = std::unique_ptr<DistCoordinator>(new DistCoordinator(rank, world_size, global_rank, global_world_size, ds_context->node_rank, ds_context->coordinator.get()));
   cudaSetDevice(rank);

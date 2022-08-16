@@ -55,8 +55,8 @@ public:
       if (rank == 0) {
         next_token = comm_requests_.Get();
       }
-      ds_context->local_coordinator->Barrier();
-      ds_context->local_coordinator->Broadcast(next_token);
+      ds_context->comm_coordinator->Barrier();
+      ds_context->comm_coordinator->Broadcast(next_token);
       comm_tokens_.Put(next_token);
       if(next_token == STOP_SIGNAL) {
         break;
