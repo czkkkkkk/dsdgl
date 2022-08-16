@@ -215,6 +215,7 @@ IdArray RebalanceRandom(IdArray ids, int batch_size, Coordinator* coor) {
     std::random_shuffle(flatten.begin(), flatten.end());
     int size_per_rank = total / world_size;
     flatten.resize(size_per_rank * world_size);
+    vecs.resize(DSContext::Global()->global_world_size);
     for(int i = 0; i < world_size; ++i) {
       vecs[i] = std::vector<int64_t>(flatten.begin() + i * size_per_rank, flatten.begin() + (i + 1) * size_per_rank);
     }
