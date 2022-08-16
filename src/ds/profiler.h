@@ -22,6 +22,7 @@ class Profiler {
  private:
   int64_t ds_sampling_local_count_ = 0;
   int64_t ds_sampling_nvlink_count_ = 0; 
+  int64_t ds_sampling_nvlink_node_count_ = 0;
   int64_t ds_sampling_pcie_count_ = 0;
   int64_t saved_count_ = 0;
   int64_t uva_sampling_pcie_count_ = 0;

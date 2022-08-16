@@ -78,7 +78,7 @@ class NeighborSampler(object):
 
 def run(rank, args):
     setup(rank, args.n_ranks)
-    ds.init(rank, args.n_ranks, enable_comm_control=False)
+    ds.init(rank, args.n_ranks, enable_comm_control=False, enable_profiler=args.enable_profiler)
     
     # load partitioned graph
     g, node_feats, edge_feats, gpb, _, _, _ = dgl.distributed.load_partition(args.part_config, rank)
@@ -167,6 +167,9 @@ def run(rank, args):
             print('Rank: ', rank, 'world_size: ', args.n_ranks, 'sampling time', toc - tic)
         if epoch >= skip_epoch:
             total += (toc - tic)
+    
+    if args.enable_profiler:
+        ds.profiler_report(args.num_epochs)
 
     if rank == 0:
         print("rank:", rank, 'world_size: ', args.n_ranks, "sampling time:", total/(args.num_epochs - skip_epoch))

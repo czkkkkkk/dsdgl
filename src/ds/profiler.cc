@@ -77,6 +77,7 @@ void Profiler::UpdateDSSamplingNvlinkCount(IdArray send_offset, int fanout) {
     int64_t size = host_send_offset_ptr[r+1] - host_send_offset_ptr[r];
     if(r != rank) {
       ds_sampling_nvlink_count_ += size * fanout * 8;
+      ds_sampling_nvlink_node_count_ += size * 8;
     }
   }
 }
@@ -118,6 +119,7 @@ void Profiler::Report(int num_epochs) {
   auto *context = DSContext::Global();
   auto local_count = GatherSum(ds_sampling_local_count_);
   auto nvlink_count = GatherSum(ds_sampling_nvlink_count_);
+  auto nvlink_node_count = GatherSum(ds_sampling_nvlink_node_count_);
   auto saved = GatherSum(saved_count_);
   auto pcie_count = GatherSum(ds_sampling_pcie_count_);
 
@@ -126,6 +128,7 @@ void Profiler::Report(int num_epochs) {
     ss << "[Rank: " << context->rank << "] is reporting profiler results\n";
     ss << " # DS Sampling Local Access: " << local_count / 1e9 / num_epochs << " GB/epoch\n";
     ss << " # DS Sampling Nvlink Access: " << nvlink_count / 1e9 / num_epochs << " GB/epoch\n";
+    ss << " # DS Sampling Nvlink Node Access: " << nvlink_node_count / 1e9 / num_epochs << " GB/epoch\n";
     ss << " # DS Sampling PCIe Access: " << pcie_count / 1e9 / num_epochs << " GB/epoch\n";
     ss << " # DS Sampling Saved Access: " << saved / 1e9 / num_epochs << " GB/epoch\n";
     LOG(INFO) << ss.str();
