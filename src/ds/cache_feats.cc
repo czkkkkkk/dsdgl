@@ -72,6 +72,8 @@ void PartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_de
   auto gathered_n_nodes = coor->Gather(n_local_nodes);
   auto gathered_ids = coor->Gather(local_shared_ids);
   auto gathered_feats = coor->GatherLargeVector(local_shared_feats);
+  local_shared_feats.clear();
+  local_shared_feats.shrink_to_fit();
   IdArray shared_feats = NullArray(feats->dtype, feats->ctx);
   std::vector<IdType> feat_pos_map;
   if(coor->IsRoot()) {
@@ -84,6 +86,8 @@ void PartitionCacheSomeFeats(IdArray feats, IdArray global_ids, IdArray local_de
 
     // auto flatten_feats = std::vector<DataType>(n_shared_nodes * feat_dim, 1);
     auto flatten_feats = Flatten(gathered_feats);
+    gathered_feats.clear();
+    gathered_feats.shrink_to_fit();
     feat_pos_map.resize(n_nodes, -1);
     for(int i = 0; i < flatten_ids.size(); ++i) {
       IdType global_nid = flatten_ids[i];
