@@ -189,24 +189,19 @@ class Data(object):
         if args.graph_cache_gb != -1:
             args.graph_cache_ratio = calculate_ratio(
                 args.graph_cache_gb, g.number_of_edges(), 8)
-        if args.feat_cache_gb != -1:
-            args.cache_ratio = calculate_ratio(
-                args.feat_cache_gb, n_local_nodes, 4 * node_feats['_N/features'].shape[1])
+        if not args.sample_only:
+            if args.feat_cache_gb != -1:
+                args.cache_ratio = calculate_ratio(
+                    args.feat_cache_gb, n_local_nodes, 4 * node_feats['_N/features'].shape[1])
 
         self.in_feats = node_feats['_N/features'].shape[1]
 
-        print('Rank {}, Host memory usage before cache feats: {} GB'.format(
-            rank, process.memory_info().rss / 1e9))
-        cache_feats(args.feat_mode, g,
-                        node_feats['_N/features'], args.cache_ratio)
-        del node_feats['_N/features']
-        print('Rank {}, Host memory usage after cache feats: {} GB'.format(
-            rank, process.memory_info().rss / 1e9))
+        if not args.sample_only:
+            cache_feats(args.feat_mode, g,
+                            node_feats['_N/features'], args.cache_ratio)
+            del node_feats['_N/features']
 
         self.num_vertices = int(gpb._max_node_ids[-1])
-
-        print('Graph cache ratio {}, feature cache ratio {}'.format(
-            args.graph_cache_ratio, args.cache_ratio))
 
         print('rank {}, # global: {}, # local: {}'.format(
             rank, self.num_vertices, n_local_nodes))
