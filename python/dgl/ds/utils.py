@@ -179,12 +179,12 @@ class Data(object):
             process.memory_info().rss / 1e9))
         g = add_self_loop(g)
 
-        n_local_nodes = node_feats['_N/train_mask'].shape[0]
+        self.n_local_nodes = node_feats['_N/train_mask'].shape[0]
         if '_N/features' not in node_feats:
             print('Using fake features with feat dim: ', args.in_feats)
             node_feats['_N/features'] = th.ones(
-                [n_local_nodes, args.in_feats], dtype=th.float32)
-            node_feats['_N/labels'] = th.zeros([n_local_nodes], dtype=th.float32)
+                [self.n_local_nodes, args.in_feats], dtype=th.float32)
+            node_feats['_N/labels'] = th.zeros([self.n_local_nodes], dtype=th.float32)
 
         if args.graph_cache_gb != -1:
             args.graph_cache_ratio = calculate_ratio(
@@ -192,7 +192,7 @@ class Data(object):
         if not args.sample_only:
             if args.feat_cache_gb != -1:
                 args.cache_ratio = calculate_ratio(
-                    args.feat_cache_gb, n_local_nodes, 4 * node_feats['_N/features'].shape[1])
+                    args.feat_cache_gb, self.n_local_nodes, 4 * node_feats['_N/features'].shape[1])
 
         self.in_feats = node_feats['_N/features'].shape[1]
 
@@ -204,10 +204,10 @@ class Data(object):
         self.num_vertices = int(gpb._max_node_ids[-1])
 
         print('rank {}, # global: {}, # local: {}'.format(
-            rank, self.num_vertices, n_local_nodes))
+            rank, self.num_vertices, self.n_local_nodes))
         print('# in feats:', self.in_feats)
         train_nid = th.masked_select(
-            g.nodes()[:n_local_nodes], node_feats['_N/train_mask'])
+            g.nodes()[:self.n_local_nodes], node_feats['_N/train_mask'])
         train_nid = rebalance_train_nids(
             train_nid, batch_size, g.ndata[NID])
         train_label = allgather_train_labels(node_feats['_N/labels'])
@@ -221,13 +221,13 @@ class Data(object):
         # tansfer graph and train nodes to gpu
         self.device = th.device('cuda:%d' % rank)
         self.train_nid = train_nid.to(self.device)
-        # train_g = g.reverse().formats(['csr'])
-        train_g = g.formats(['csr'])
+        train_g = g.reverse().formats(['csr'])
+        # train_g = g.formats(['csr'])
         g = None
         self.train_g = csr_to_global_id(train_g, train_g.ndata[NID])
-        self.global_nid_map = train_g.ndata[NID].to(self.device)
-        cache_graph(train_g, args.graph_cache_ratio)
         train_g = None
+        self.global_nid_map = self.train_g.ndata[NID].to(self.device)
+        cache_graph(self.train_g, args.graph_cache_ratio)
         print('Rank {}, pytorch memory usage after move train_g to device : {} GB'.format(
             rank, th.cuda.memory_allocated(rank) / 1e9))
         self.train_label = train_label.to(self.device)
